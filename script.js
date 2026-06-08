@@ -375,7 +375,7 @@ function renderTasksTab() {
     const dateMap = {};
     state.tasks.forEach(task => {
       const d = new Date(task.date);
-      const groupKey = \`\${d.getFullYear()}-\${d.getMonth()}-\${d.getDate()}\`;
+      const groupKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (!dateMap[groupKey]) {
         dateMap[groupKey] = {
            ts: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(),
@@ -393,7 +393,7 @@ function renderTasksTab() {
       const m = d.getMonth() + 1;
       const day = d.getDate();
       const w = ['日','月','火','水','木','金','土'][d.getDay()];
-      const headerStr = \`\${m}月\${day}日 (\${w})\`;
+      const headerStr = `${m}月${day}日 (${w})`;
       
       const nowTs = new Date().setHours(0,0,0,0);
       const isPast = g.ts < nowTs;
@@ -404,11 +404,11 @@ function renderTasksTab() {
 
       return `
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-4 last:mb-0">
-           <div class="\${headerColors} border-b px-4 py-2 font-bold text-sm tracking-wide">
-             \${headerStr} \${isToday ? '<span class="ml-2 text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider">Today</span>' : ''}
+           <div class="${headerColors} border-b px-4 py-2 font-bold text-sm tracking-wide">
+             ${headerStr} ${isToday ? '<span class="ml-2 text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider">Today</span>' : ''}
            </div>
            <div class="flex flex-col divide-y divide-slate-100">
-             \${g.tasks.map(task => {
+             ${g.tasks.map(task => {
                 const course = state.courses.find(c => c.id === task.courseId) || { name: '不明な科目' };
                 const isOverdue = !task.completed && task.type !== 'delivery' && isPastButNotToday(task.date);
                 const isTodayTask = !task.completed && task.type !== 'delivery' && isTodayDate(task.date);
@@ -417,9 +417,9 @@ function renderTasksTab() {
                 if (task.type !== 'delivery') {
                   const checkColor = task.completed ? "text-slate-400" : isOverdue ? "text-red-500 hover:text-red-600" : "text-blue-600 hover:text-blue-700";
                   const icon = task.completed ? "check-circle" : "circle";
-                  checkBtn = \`<button onclick="toggleTaskCompletion('\${task.id}')" class="transition-colors \${checkColor}"><i data-lucide="\${icon}" class="w-5 h-5"></i></button>\`;
+                  checkBtn = `<button onclick="toggleTaskCompletion('${task.id}')" class="transition-colors ${checkColor}"><i data-lucide="${icon}" class="w-5 h-5"></i></button>`;
                 } else {
-                  checkBtn = \`<div class="w-2 h-2 rounded-full bg-slate-300"></div>\`;
+                  checkBtn = `<div class="w-2 h-2 rounded-full bg-slate-300"></div>`;
                 }
 
                 const badgeColors = task.type === 'assignment' ? "bg-red-100 text-red-700 border border-red-200" :
@@ -429,30 +429,30 @@ function renderTasksTab() {
                 const dateColor = isOverdue && !task.completed ? "text-red-600" :
                                   isTodayTask ? "text-amber-600" : "text-slate-700";
 
-                return \`
+                return `
                 <div class="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors group/task">
-                  <div class="flex items-center justify-center w-6 shrink-0">\${checkBtn}</div>
-                  <div class="flex-1 flex flex-col gap-1 \${task.completed ? 'opacity-50 line-through' : ''}">
+                  <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
+                  <div class="flex-1 flex flex-col gap-1 ${task.completed ? 'opacity-50 line-through' : ''}">
                     <div class="flex flex-wrap items-center gap-2 text-sm">
-                      <span class="font-bold text-slate-700 text-xs truncate max-w-[150px]" title="\${course.name}">\${course.name}</span>
-                      <span class="text-slate-500 text-xs border-l border-slate-300 pl-2">\${task.lectureName}</span>
-                      <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 \${badgeColors}">\${typeLabels[task.type]}</span>
-                      \${task.isSelfDeadline ? \`<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>\` : ''}
+                      <span class="font-bold text-slate-700 text-xs truncate max-w-[150px]" title="${course.name}">${course.name}</span>
+                      <span class="text-slate-500 text-xs border-l border-slate-300 pl-2">${task.lectureName}</span>
+                      <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
+                      ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ''}
                     </div>
-                    <div class="text-xs font-bold tabular-nums flex items-center gap-1.5 \${dateColor}">
+                    <div class="text-xs font-bold tabular-nums flex items-center gap-1.5 ${dateColor}">
                       <i data-lucide="clock" class="w-3.5 h-3.5"></i>
-                      \${task.date.includes('T00:00:00') && task.type === 'delivery' ? '時間未定' : formatTaskTimeOnly(task.date)}
+                      ${task.date.includes('T00:00:00') && task.type === 'delivery' ? '時間未定' : formatTaskTimeOnly(task.date)}
                     </div>
                   </div>
-                  <button onclick="deleteTask('\${task.id}')" class="text-slate-300 hover:text-red-500 p-2 shrink-0 transition-colors opacity-0 group-hover/task:opacity-100 md:opacity-100 md:hover:bg-red-50 rounded" title="タスク削除">
+                  <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-2 shrink-0 transition-colors opacity-0 group-hover/task:opacity-100 md:opacity-100 md:hover:bg-red-50 rounded" title="タスク削除">
                     <i data-lucide="x" class="w-4 h-4"></i>
                   </button>
                 </div>
-                \`;
+                `;
              }).join('')}
            </div>
         </div>
-      \`;
+      `;
     }).join('');
   }
 
