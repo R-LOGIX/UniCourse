@@ -11,6 +11,7 @@ let state = {
   courseDescInput: '',
   activeCourseId: null,
   editingCourseId: null,
+  editCourseName: '',
   editCourseDesc: '',
   editingLecture: null // { courseId, oldName, newName }
 };
@@ -491,22 +492,31 @@ function renderCoursesTab() {
   }
 
   const listHtml = state.courses.map(course => {
-    let descHtml = '';
+    let headerAndDescHtml = '';
     if (state.editingCourseId === course.id) {
-      descHtml = `
-        <div class="mt-2 flex flex-col gap-2 relative z-10 w-full" onclick="event.stopPropagation()">
-           <textarea oninput="state.editCourseDesc=this.value" class="w-full border border-slate-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none h-16">${state.editCourseDesc}</textarea>
-           <div class="flex gap-2 justify-end">
-              <button onclick="state.editingCourseId=null;render()" class="text-xs text-slate-500 hover:text-slate-700 font-medium">キャンセル</button>
-              <button onclick="saveCourseDesc('${course.id}')" class="text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold px-3 py-1.5 rounded-md transition-colors">保存する</button>
+      headerAndDescHtml = `
+        <div class="flex flex-col gap-2 relative z-10 w-full" onclick="event.stopPropagation()">
+           <label class="text-xs font-bold text-slate-500">科目名</label>
+           <input type="text" oninput="state.editCourseName=this.value" value="${state.editCourseName}" class="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500" />
+           <label class="text-xs font-bold text-slate-500 mt-1">科目説明</label>
+           <textarea oninput="state.editCourseDesc=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none h-20">${state.editCourseDesc}</textarea>
+           <div class="flex gap-2 justify-end mt-2">
+              <button onclick="state.editingCourseId=null;render()" class="text-xs text-slate-600 hover:bg-slate-100 font-medium px-4 py-2 rounded-lg transition-colors">キャンセル</button>
+              <button onclick="saveCourseEdit('${course.id}')" class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg transition-colors">保存する</button>
            </div>
         </div>
       `;
     } else {
-      const descText = course.description ? course.description.replace(/</g, "&lt;").replace(/>/g, "&gt;") : '<span class="text-slate-300 italic text-xs">説明なし (クリックで追加)</span>';
-      descHtml = `
-        <div class="mt-1 group cursor-pointer w-full" onclick="state.editingCourseId='${course.id}'; state.editCourseDesc='${course.description}'; render()">
-          <p class="text-sm text-slate-500 whitespace-pre-wrap transition-colors group-hover:text-slate-600">${descText}</p>
+      const descText = course.description ? course.description.replace(/</g, "&lt;").replace(/>/g, "&gt;") : '<span class="text-slate-400 italic text-xs">説明なし</span>';
+      headerAndDescHtml = `
+        <div class="flex-1 w-full max-w-[calc(100%-2rem)] pr-2 group cursor-pointer" onclick="state.editingCourseId='${course.id}'; state.editCourseName='${course.name.replace(/'/g, "\\'")}'; state.editCourseDesc='${(course.description || '').replace(/'/g, "\\'").replace(/\n/g, '\\n')}'; render()">
+           <div class="flex items-center gap-2">
+             <h3 class="text-lg font-bold text-slate-800 whitespace-normal break-words">${course.name}</h3>
+             <i data-lucide="edit-2" class="w-4 h-4 text-slate-300 group-hover:text-blue-500 transition-colors shrink-0"></i>
+           </div>
+           <div class="mt-1 w-full">
+             <p class="text-sm text-slate-500 whitespace-pre-wrap transition-colors group-hover:text-slate-600">${descText}</p>
+           </div>
         </div>
       `;
     }
@@ -514,18 +524,19 @@ function renderCoursesTab() {
     return `
       <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col">
         <div class="flex justify-between items-start">
-          <div class="flex-1 w-full max-w-[calc(100%-2rem)] pr-2">
-            <h3 class="text-lg font-bold text-slate-800 whitespace-normal break-words">${course.name}</h3>
-            ${descHtml}
-          </div>
+          ${headerAndDescHtml}
+          ${state.editingCourseId !== course.id ? `
           <button onclick="deleteCourse('${course.id}')" class="text-slate-300 hover:bg-red-50 hover:text-red-500 p-1.5 rounded-lg transition-colors shrink-0" aria-label="科目削除">
             <i data-lucide="trash-2" class="w-5 h-5"></i>
           </button>
+          ` : ''}
         </div>
         
+        ${state.editingCourseId !== course.id ? `
         <button onclick="openScheduleAdder('${course.id}')" class="mt-5 border border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50/50 font-bold py-2.5 px-4 rounded-xl w-full text-sm transition-all flex items-center justify-center gap-1.5 shadow-sm">
           <i data-lucide="plus" class="w-4 h-4"></i> スケジュールを追加
         </button>
+        ` : ''}
       </div>
     `;
   }).join('');
@@ -556,9 +567,12 @@ function renderCoursesTab() {
   `;
 }
 
-function saveCourseDesc(id) {
+function saveCourseEdit(id) {
   const c = state.courses.find(c => c.id === id);
   if (c) {
+    if (state.editCourseName.trim()) {
+      c.name = state.editCourseName.trim();
+    }
     c.description = state.editCourseDesc;
     saveData();
   }
