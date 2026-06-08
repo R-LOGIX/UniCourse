@@ -3,6 +3,7 @@ const STORAGE_KEY = 'ondemand_app_data';
 
 let state = {
   activeTab: 'tasks',
+  taskSortMode: 'course', // 'course' or 'date'
   courses: [],
   tasks: [],
   showAddCourse: false,
@@ -10,7 +11,8 @@ let state = {
   courseDescInput: '',
   activeCourseId: null,
   editingCourseId: null,
-  editCourseDesc: ''
+  editCourseDesc: '',
+  editingLecture: null // { courseId, oldName, newName }
 };
 
 // Generate UUID-like short ID
@@ -157,6 +159,34 @@ function isTodayDate(isoString) {
   return d.toDateString() === now.toDateString();
 }
 
+function formatTaskTimeOnly(isoString) {
+  const d = new Date(isoString);
+  const h = d.getHours().toString().padStart(2, '0');
+  const min = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${min}`;
+}
+
+function startEditLecture(courseId, name) {
+  state.editingLecture = { courseId, oldName: name, newName: name };
+  render();
+}
+
+function saveLectureName() {
+  if (state.editingLecture) {
+    const { courseId, oldName, newName } = state.editingLecture;
+    if (newName.trim() && newName !== oldName) {
+      state.tasks.forEach(t => {
+        if (t.courseId === courseId && t.lectureName === oldName) {
+          t.lectureName = newName.trim();
+        }
+      });
+      saveData();
+    }
+  }
+  state.editingLecture = null;
+  render();
+}
+
 // Rendering UI
 function render() {
   renderNav();
@@ -224,54 +254,161 @@ function renderNav() {
 }
 
 function renderTasksTab() {
-  const grouped = state.courses.map(course => {
-    const courseTasks = state.tasks.filter(t => t.courseId === course.id);
-    const map = {};
-    courseTasks.forEach(t => {
-      if (!map[t.lectureName]) map[t.lectureName] = [];
-      map[t.lectureName].push(t);
-    });
-    const lectures = Object.entries(map).map(([name, tasks]) => {
-      const order = { delivery: 0, watch: 1, assignment: 2 };
-      tasks.sort((a,b) => order[a.type] - order[b.type]);
-      return { name, tasks };
-    });
+  const switchHtml = `
+    <div class="flex items-center gap-2 mb-2 bg-slate-100 p-1 rounded-lg w-max ml-auto shadow-inner border border-slate-200/60">
+      <button onclick="state.taskSortMode='course'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all ${state.taskSortMode === 'course' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">科目別</button>
+      <button onclick="state.taskSortMode='date'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all ${state.taskSortMode === 'date' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">日付順</button>
+    </div>
+  `;
 
-    lectures.sort((a,b) => {
-      const ea = Math.min(...a.tasks.map(t => new Date(t.date).getTime()));
-      const eb = Math.min(...b.tasks.map(t => new Date(t.date).getTime()));
-      return ea - eb;
-    });
-
-    return { course, lectures };
-  }).filter(c => c.lectures.length > 0);
-
-  if (grouped.length === 0) {
+  if (state.tasks.length === 0) {
     return `
-      <div class="flex flex-col gap-4 space-y-2 animate-in fade-in">
+      <div class="flex flex-col gap-2 animate-in fade-in">
         <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
           <i data-lucide="clock" class="w-5 h-5"></i> 講義スケジュール
         </h2>
-        <div class="text-center p-8 bg-white rounded-lg shadow-sm border border-slate-100 text-slate-500">
+        <div class="text-center p-8 mt-4 bg-white rounded-lg shadow-sm border border-slate-100 text-slate-500">
           表示するタスクがありません。科目管理からタスクを追加してください。
         </div>
       </div>
     `;
   }
 
-  const coursesHtml = grouped.map(({course, lectures}) => `
-    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      <div class="bg-blue-50/50 border-b border-slate-200 px-4 py-3">
-        <h3 class="font-bold text-slate-800 text-lg flex items-center gap-2">
-           <i data-lucide="book-open" class="w-4 h-4 text-blue-600"></i> ${course.name}
-        </h3>
+  let contentHtml = '';
+
+  if (state.taskSortMode === 'course') {
+    const grouped = state.courses.map(course => {
+      const courseTasks = state.tasks.filter(t => t.courseId === course.id);
+      const map = {};
+      courseTasks.forEach(t => {
+        if (!map[t.lectureName]) map[t.lectureName] = [];
+        map[t.lectureName].push(t);
+      });
+      const lectures = Object.entries(map).map(([name, tasks]) => {
+        const order = { delivery: 0, watch: 1, assignment: 2 };
+        tasks.sort((a,b) => order[a.type] - order[b.type]);
+        return { name, tasks };
+      });
+      lectures.sort((a,b) => {
+        const ea = Math.min(...a.tasks.map(t => new Date(t.date).getTime()));
+        const eb = Math.min(...b.tasks.map(t => new Date(t.date).getTime()));
+        return ea - eb;
+      });
+      return { course, lectures };
+    }).filter(c => c.lectures.length > 0);
+
+    contentHtml = grouped.map(({course, lectures}) => `
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="bg-blue-50/50 border-b border-slate-200 px-4 py-3">
+          <h3 class="font-bold text-slate-800 text-lg flex items-center gap-2">
+             <i data-lucide="book-open" class="w-4 h-4 text-blue-600"></i> ${course.name}
+          </h3>
+        </div>
+        <div class="p-4 flex flex-col gap-4">
+          ${lectures.map(lec => {
+            let editLecHtml = '';
+            if (state.editingLecture && state.editingLecture.courseId === course.id && state.editingLecture.oldName === lec.name) {
+              editLecHtml = `
+                <div class="flex flex-wrap items-center gap-2 mb-2 bg-slate-50 p-2 rounded border border-slate-200">
+                   <input type="text" value="${state.editingLecture.newName}" oninput="state.editingLecture.newName=this.value" class="border border-slate-300 rounded px-2 py-1 text-sm outline-none w-32 focus:border-blue-500" />
+                   <button onclick="saveLectureName()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-bold transition-colors">変更する</button>
+                   <button onclick="state.editingLecture=null; render()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1 rounded text-xs font-bold transition-colors">キャンセル</button>
+                </div>
+              `;
+            } else {
+              editLecHtml = `
+                <h4 class="font-bold text-slate-700 text-sm ml-1 flex items-center gap-2 group cursor-pointer hover:text-blue-700 transition-colors w-max" onclick="startEditLecture('${course.id}', '${lec.name}')" title="クリックして名前を編集">
+                  ${lec.name}
+                  <i data-lucide="edit-2" class="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-500 transition-colors"></i>
+                </h4>
+              `;
+            }
+
+            return `
+            <div class="flex flex-col gap-2">
+              ${editLecHtml}
+              <div class="grid grid-cols-1 gap-2 pl-4 border-l-2 border-slate-100">
+                ${lec.tasks.map(task => {
+                  const isOverdue = !task.completed && task.type !== 'delivery' && isPastButNotToday(task.date);
+                  const isTodayTask = !task.completed && task.type !== 'delivery' && isTodayDate(task.date);
+                  
+                  let checkBtn = '';
+                  if (task.type !== 'delivery') {
+                    const checkColor = task.completed ? "text-slate-400" : isOverdue ? "text-red-500 hover:text-red-600" : "text-blue-600 hover:text-blue-700";
+                    const icon = task.completed ? "check-circle" : "circle";
+                    checkBtn = `<button onclick="toggleTaskCompletion('${task.id}')" class="transition-colors ${checkColor}"><i data-lucide="${icon}" class="w-5 h-5"></i></button>`;
+                  } else {
+                    checkBtn = `<div class="w-2 h-2 rounded-full bg-slate-300"></div>`;
+                  }
+
+                  const badgeColors = task.type === 'assignment' ? "bg-red-100 text-red-700 border border-red-200" :
+                                     task.type === 'watch' ? "bg-amber-100 text-amber-700 border border-amber-200" :
+                                     "bg-slate-100 text-slate-700 border border-slate-200";
+
+                  const dateColor = isOverdue && !task.completed ? "text-red-600" :
+                                    isTodayTask ? "text-amber-600" : "text-slate-700";
+
+                  return `
+                  <div class="flex items-center gap-3 group/task hover:bg-slate-50 p-1.5 -ml-1.5 rounded transition-colors">
+                    <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
+                    <div class="flex-1 flex flex-wrap items-center gap-2 text-sm ${task.completed ? 'opacity-50 line-through' : ''}">
+                      <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
+                      <span class="font-bold tabular-nums ${dateColor}">${formatTaskDate(task.date)}</span>
+                      ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ''}
+                    </div>
+                    <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-1 shrink-0 transition-colors opacity-0 group-hover/task:opacity-100 md:opacity-100 md:hover:bg-red-50 rounded" title="タスク削除">
+                      <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+            `;
+          }).join('')}
+        </div>
       </div>
-      <div class="p-4 flex flex-col gap-4">
-        ${lectures.map(lec => `
-          <div class="flex flex-col gap-2">
-            <h4 class="font-bold text-slate-700 text-sm ml-1">${lec.name}</h4>
-            <div class="grid grid-cols-1 gap-2 pl-4 border-l-2 border-slate-100">
-              ${lec.tasks.map(task => {
+    `).join('');
+  } else {
+    // taskSortMode === 'date'
+    const dateMap = {};
+    state.tasks.forEach(task => {
+      const d = new Date(task.date);
+      const groupKey = \`\${d.getFullYear()}-\${d.getMonth()}-\${d.getDate()}\`;
+      if (!dateMap[groupKey]) {
+        dateMap[groupKey] = {
+           ts: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(),
+           tasks: []
+        };
+      }
+      dateMap[groupKey].tasks.push(task);
+    });
+
+    const groups = Object.values(dateMap);
+    groups.sort((a,b) => a.ts - b.ts);
+
+    contentHtml = groups.map(g => {
+      const d = new Date(g.ts);
+      const m = d.getMonth() + 1;
+      const day = d.getDate();
+      const w = ['日','月','火','水','木','金','土'][d.getDay()];
+      const headerStr = \`\${m}月\${day}日 (\${w})\`;
+      
+      const nowTs = new Date().setHours(0,0,0,0);
+      const isPast = g.ts < nowTs;
+      const isToday = g.ts === nowTs;
+      const headerColors = isPast ? 'text-slate-600 bg-slate-100 border-slate-200 opacity-80' : isToday ? 'text-blue-800 bg-blue-100 border-blue-200 shadow-sm' : 'text-slate-700 bg-slate-50 border-slate-200';
+
+      g.tasks.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      return `
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-4 last:mb-0">
+           <div class="\${headerColors} border-b px-4 py-2 font-bold text-sm tracking-wide">
+             \${headerStr} \${isToday ? '<span class="ml-2 text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider">Today</span>' : ''}
+           </div>
+           <div class="flex flex-col divide-y divide-slate-100">
+             \${g.tasks.map(task => {
+                const course = state.courses.find(c => c.id === task.courseId) || { name: '不明な科目' };
                 const isOverdue = !task.completed && task.type !== 'delivery' && isPastButNotToday(task.date);
                 const isTodayTask = !task.completed && task.type !== 'delivery' && isTodayDate(task.date);
                 
@@ -279,45 +416,54 @@ function renderTasksTab() {
                 if (task.type !== 'delivery') {
                   const checkColor = task.completed ? "text-slate-400" : isOverdue ? "text-red-500 hover:text-red-600" : "text-blue-600 hover:text-blue-700";
                   const icon = task.completed ? "check-circle" : "circle";
-                  checkBtn = `<button onclick="toggleTaskCompletion('${task.id}')" class="transition-colors ${checkColor}"><i data-lucide="${icon}" class="w-5 h-5"></i></button>`;
+                  checkBtn = \`<button onclick="toggleTaskCompletion('\${task.id}')" class="transition-colors \${checkColor}"><i data-lucide="\${icon}" class="w-5 h-5"></i></button>\`;
                 } else {
-                  checkBtn = `<div class="w-2 h-2 rounded-full bg-slate-300"></div>`;
+                  checkBtn = \`<div class="w-2 h-2 rounded-full bg-slate-300"></div>\`;
                 }
 
-                const badgeColors = task.type === 'assignment' ? "bg-red-100 text-red-700" :
-                                   task.type === 'watch' ? "bg-amber-100 text-amber-700" :
-                                   "bg-slate-100 text-slate-700";
+                const badgeColors = task.type === 'assignment' ? "bg-red-100 text-red-700 border border-red-200" :
+                                   task.type === 'watch' ? "bg-amber-100 text-amber-700 border border-amber-200" :
+                                   "bg-slate-100 text-slate-700 border border-slate-200";
 
                 const dateColor = isOverdue && !task.completed ? "text-red-600" :
                                   isTodayTask ? "text-amber-600" : "text-slate-700";
 
-                return `
-                <div class="flex items-center gap-3">
-                  <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
-                  <div class="flex-1 flex flex-wrap items-center gap-2 text-sm ${task.completed ? 'opacity-50 line-through' : ''}">
-                    <span class="font-medium text-xs px-2 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
-                    <span class="font-bold tabular-nums ${dateColor}">${formatTaskDate(task.date)}</span>
-                    ${task.isSelfDeadline ? `<span class="text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ''}
+                return \`
+                <div class="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors group/task">
+                  <div class="flex items-center justify-center w-6 shrink-0">\${checkBtn}</div>
+                  <div class="flex-1 flex flex-col gap-1 \${task.completed ? 'opacity-50 line-through' : ''}">
+                    <div class="flex flex-wrap items-center gap-2 text-sm">
+                      <span class="font-bold text-slate-700 text-xs truncate max-w-[150px]" title="\${course.name}">\${course.name}</span>
+                      <span class="text-slate-500 text-xs border-l border-slate-300 pl-2">\${task.lectureName}</span>
+                      <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 \${badgeColors}">\${typeLabels[task.type]}</span>
+                      \${task.isSelfDeadline ? \`<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>\` : ''}
+                    </div>
+                    <div class="text-xs font-bold tabular-nums flex items-center gap-1.5 \${dateColor}">
+                      <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+                      \${task.date.includes('T00:00:00') && task.type === 'delivery' ? '時間未定' : formatTaskTimeOnly(task.date)}
+                    </div>
                   </div>
-                  <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-1 shrink-0 transition-colors">
+                  <button onclick="deleteTask('\${task.id}')" class="text-slate-300 hover:text-red-500 p-2 shrink-0 transition-colors opacity-0 group-hover/task:opacity-100 md:opacity-100 md:hover:bg-red-50 rounded" title="タスク削除">
                     <i data-lucide="x" class="w-4 h-4"></i>
                   </button>
                 </div>
-                `;
-              }).join('')}
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `).join('');
+                \`;
+             }).join('')}
+           </div>
+        </div>
+      \`;
+    }).join('');
+  }
 
   return `
-    <div class="flex flex-col gap-4 space-y-2 animate-in fade-in">
-      <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-        <i data-lucide="clock" class="w-5 h-5"></i> 講義スケジュール
-      </h2>
-      <div class="flex flex-col gap-6">${coursesHtml}</div>
+    <div class="flex flex-col gap-2 animate-in fade-in">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <i data-lucide="clock" class="w-5 h-5"></i> 講義スケジュール
+        </h2>
+        ${switchHtml}
+      </div>
+      <div class="flex flex-col gap-4">${contentHtml}</div>
     </div>
   `;
 }
@@ -501,7 +647,7 @@ function openScheduleAdder(courseId) {
 
   adderConfig = {
     courseId,
-    startNum: max + 1,
+    startNum: 1, // Start strictly from 1 as requested
     add_mode: 'calendar', // 'calendar' or 'rows'
     calendarDates: [],
     calDeliveryCheck: false,
@@ -748,7 +894,18 @@ function renderModal() {
             </button>
           </div>
           
-          <div class="px-6 flex gap-2 w-full">
+          <div class="px-6 pb-3 pt-1 flex items-center justify-between border-t border-slate-100/50">
+            <div class="flex items-center gap-2">
+               <span class="text-xs font-bold text-slate-600">開始ナンバー:</span>
+               <div class="flex items-center text-sm font-bold bg-white border border-slate-200 rounded text-slate-600 overflow-hidden focus-within:border-blue-500">
+                  <span class="bg-slate-50 px-2 py-1 border-r border-slate-200">第</span>
+                  <input type="number" value="${adderConfig.startNum}" onchange="adderConfig.startNum=parseInt(this.value)||1; renderModal()" class="w-12 text-center py-1 outline-none font-bold text-blue-600" min="1" />
+                  <span class="bg-slate-50 px-2 py-1 border-l border-slate-200">回</span>
+               </div>
+            </div>
+          </div>
+
+          <div class="px-6 flex gap-2 w-full border-t border-slate-200 bg-white pt-2">
             <button onclick="switchAdderMode('calendar')" class="pb-3 px-2 border-b-2 transition-colors text-sm font-bold flex items-center gap-1.5 ${adderConfig.add_mode === 'calendar' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">
                <i data-lucide="calendar-plus" class="w-4 h-4"></i> カレンダーで一括作成
             </button>
