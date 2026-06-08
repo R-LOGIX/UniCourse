@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>受講管理アプリ｜UniCourse</title>
+  <!-- Tailwind CSS via browser for plain HTML/JS setups -->
+  <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+  <!-- Lucide Icons mapping -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="bg-slate-50 font-sans text-slate-800 pb-20 sm:pb-0 min-h-screen flex flex-col">
+  
+  <header class="bg-blue-600 text-white p-4 shadow-sm sticky top-0 z-10 flex items-center justify-between">
+    <h1 class="text-xl font-bold flex items-center gap-2">
+      <i data-lucide="book-open" class="w-5 h-5"></i>
+      受講管理アプリ｜UniCourse
+    </h1>
+  </header>
+
+  <main class="flex-1 w-full max-w-3xl mx-auto p-4 flex flex-col gap-4">
+    <div id="app"></div>
+  </main>
+
+  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 sm:border-t-0 justify-around p-2 flex sm:hidden z-20 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]" id="mobile-nav">
+  </nav>
+
+  <div class="hidden sm:flex fixed bottom-0 top-0 left-0 w-64 bg-slate-900 flex-col py-6 shadow-xl z-20" id="desktop-nav">
+  </div>
+  
+  <style>
+    @media (min-width: 640px) {
+      body {
+        padding-left: 17rem;
+      }
+      header, #mobile-nav {
+        display: none !important;
+      }
+      main {
+        max-width: 1000px;
+        margin: 0 auto;
+        margin-top: 2rem;
+      }
+    }
+  </style>
+
+  <!-- Notification Modal Container -->
+  <div id="modal-root"></div>
+
+  <!-- Main logic script -->
+  <script src="script.js"></script>
+</body>
+</html>
