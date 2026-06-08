@@ -13,7 +13,9 @@ let state = {
   editingCourseId: null,
   editCourseName: '',
   editCourseDesc: '',
-  editingLecture: null // { courseId, oldName, newName }
+  editingLecture: null, // { courseId, oldName, newName }
+  editingTaskId: null,
+  editTaskData: null
 };
 
 // Generate UUID-like short ID
@@ -188,6 +190,50 @@ function saveLectureName() {
   render();
 }
 
+function startEditTask(taskId) {
+  const t = state.tasks.find(x => x.id === taskId);
+  if (!t) return;
+  const dateObj = new Date(t.date);
+  // Get local date/time string correctly formatted
+  const year = dateObj.getFullYear();
+  const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+  const day = dateObj.getDate().toString().padStart(2, '0');
+  const dateStr = `${year}-${month}-${day}`;
+  const hours = dateObj.getHours().toString().padStart(2, '0');
+  const mins = dateObj.getMinutes().toString().padStart(2, '0');
+  const timeStr = `${hours}:${mins}`;
+
+  state.editingTaskId = taskId;
+  state.editTaskData = {
+    lectureName: t.lectureName,
+    type: t.type,
+    dateStr: dateStr,
+    timeStr: timeStr,
+    isSelfDeadline: t.isSelfDeadline
+  };
+  render();
+}
+
+function saveEditTask() {
+  const t = state.tasks.find(x => x.id === state.editingTaskId);
+  if (t && state.editTaskData) {
+    t.lectureName = state.editTaskData.lectureName.trim() || '無題の講義';
+    t.type = state.editTaskData.type;
+    t.date = `${state.editTaskData.dateStr}T${state.editTaskData.timeStr || '00:00'}:00`;
+    t.isSelfDeadline = state.editTaskData.isSelfDeadline;
+    saveData();
+  }
+  state.editingTaskId = null;
+  state.editTaskData = null;
+  render();
+}
+
+function cancelEditTask() {
+  state.editingTaskId = null;
+  state.editTaskData = null;
+  render();
+}
+
 // Rendering UI
 function render() {
   renderNav();
@@ -349,6 +395,28 @@ function renderTasksTab() {
                   const dateColor = isOverdue && !task.completed ? "text-red-600" :
                                     isTodayTask ? "text-amber-600" : "text-slate-700";
 
+                  if (state.editingTaskId === task.id) {
+                    return `
+                    <div class="flex flex-col gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg -ml-1.5 transition-colors my-1">
+                      <div class="flex flex-wrap gap-2 items-center">
+                         <input type="text" value="${state.editTaskData.lectureName}" oninput="state.editTaskData.lectureName=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs w-28 outline-none" placeholder="講義名" />
+                         <select onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white">
+                           <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
+                           <option value="watch" ${state.editTaskData.type==='watch'?'selected':''}>視聴期限</option>
+                           <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
+                         </select>
+                         <input type="date" value="${state.editTaskData.dateStr}" onchange="state.editTaskData.dateStr=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none w-[110px]" />
+                         <input type="time" value="${state.editTaskData.timeStr}" onchange="state.editTaskData.timeStr=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none w-20" />
+                         <label class="flex items-center gap-1 text-xs cursor-pointer"><input type="checkbox" ${state.editTaskData.isSelfDeadline?'checked':''} onchange="state.editTaskData.isSelfDeadline=this.checked" /> 自主期限</label>
+                      </div>
+                      <div class="flex justify-end gap-2">
+                         <button onclick="cancelEditTask()" class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded font-bold text-slate-700 transition">キャンセル</button>
+                         <button onclick="saveEditTask()" class="text-xs bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded font-bold text-white transition">保存</button>
+                      </div>
+                    </div>
+                    `;
+                  }
+
                   return `
                   <div class="flex items-center gap-3 group/task hover:bg-slate-50 p-1.5 -ml-1.5 rounded transition-colors">
                     <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
@@ -357,9 +425,14 @@ function renderTasksTab() {
                       <span class="font-bold tabular-nums ${dateColor}">${formatTaskDate(task.date)}</span>
                       ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ''}
                     </div>
-                    <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-1 shrink-0 transition-colors opacity-0 group-hover/task:opacity-100 md:opacity-100 md:hover:bg-red-50 rounded" title="タスク削除">
-                      <i data-lucide="x" class="w-4 h-4"></i>
-                    </button>
+                    <div class="flex items-center gap-1 opacity-0 group-hover/task:opacity-100 md:opacity-100 transition-opacity shrink-0">
+                      <button onclick="startEditTask('${task.id}')" class="text-slate-300 hover:text-blue-500 p-1 hover:bg-blue-50 rounded" title="タスク編集">
+                        <i data-lucide="edit-2" class="w-4 h-4"></i>
+                      </button>
+                      <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-1 hover:bg-red-50 rounded" title="タスク削除">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                      </button>
+                    </div>
                   </div>
                   `;
                 }).join('')}
@@ -429,6 +502,28 @@ function renderTasksTab() {
                 const dateColor = isOverdue && !task.completed ? "text-red-600" :
                                   isTodayTask ? "text-amber-600" : "text-slate-700";
 
+                if (state.editingTaskId === task.id) {
+                    return `
+                    <div class="flex flex-col gap-2 p-3 bg-blue-50 border border-blue-100 transition-colors">
+                      <div class="flex flex-wrap gap-2 items-center">
+                         <input type="text" value="${state.editTaskData.lectureName}" oninput="state.editTaskData.lectureName=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs w-28 outline-none" placeholder="講義名" />
+                         <select onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white">
+                           <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
+                           <option value="watch" ${state.editTaskData.type==='watch'?'selected':''}>視聴期限</option>
+                           <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
+                         </select>
+                         <input type="date" value="${state.editTaskData.dateStr}" onchange="state.editTaskData.dateStr=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none w-[110px]" />
+                         <input type="time" value="${state.editTaskData.timeStr}" onchange="state.editTaskData.timeStr=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none w-20" />
+                         <label class="flex items-center gap-1 text-xs cursor-pointer"><input type="checkbox" ${state.editTaskData.isSelfDeadline?'checked':''} onchange="state.editTaskData.isSelfDeadline=this.checked" /> 自主期限</label>
+                      </div>
+                      <div class="flex justify-end gap-2 mt-1">
+                         <button onclick="cancelEditTask()" class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded font-bold text-slate-700 transition">キャンセル</button>
+                         <button onclick="saveEditTask()" class="text-xs bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded font-bold text-white transition">保存</button>
+                      </div>
+                    </div>
+                    `;
+                }
+
                 return `
                 <div class="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors group/task">
                   <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
@@ -444,9 +539,14 @@ function renderTasksTab() {
                       ${task.date.includes('T00:00:00') && task.type === 'delivery' ? '時間未定' : formatTaskTimeOnly(task.date)}
                     </div>
                   </div>
-                  <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-2 shrink-0 transition-colors opacity-0 group-hover/task:opacity-100 md:opacity-100 md:hover:bg-red-50 rounded" title="タスク削除">
-                    <i data-lucide="x" class="w-4 h-4"></i>
-                  </button>
+                  <div class="flex flex-col sm:flex-row items-center gap-1 opacity-0 group-hover/task:opacity-100 md:opacity-100 transition-opacity shrink-0">
+                    <button onclick="startEditTask('${task.id}')" class="text-slate-300 hover:text-blue-500 p-1.5 hover:bg-blue-50 rounded" title="タスク編集">
+                      <i data-lucide="edit-2" class="w-4 h-4"></i>
+                    </button>
+                    <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded" title="タスク削除">
+                      <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                  </div>
                 </div>
                 `;
              }).join('')}
