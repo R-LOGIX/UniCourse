@@ -19,10 +19,12 @@ function generateId() {
 }
 
 // Load from local storage
+let storageCrashed = false;
+
 function loadData() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    try {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
       const parsed = JSON.parse(saved);
       state.courses = parsed.courses || [];
       state.tasks = (parsed.tasks || []).map(t => ({
@@ -30,17 +32,26 @@ function loadData() {
         lectureName: t.lectureName || '無題の講義',
         isSelfDeadline: t.isSelfDeadline !== undefined ? t.isSelfDeadline : (t.deadlineType === 'self')
       }));
-    } catch(e) {
-      console.error(e);
     }
+  } catch(e) {
+    console.error('Failed to access localStorage:', e);
+    storageCrashed = true;
   }
 }
 
 function saveData() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    courses: state.courses,
-    tasks: state.tasks
-  }));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      courses: state.courses,
+      tasks: state.tasks
+    }));
+  } catch (e) {
+    console.error('Failed to set localStorage:', e);
+    if (!storageCrashed) {
+      alert("プレビュー環境の制限等によりデータが保存できませんでした。新しいタブで開くことをお勧めします。");
+      storageCrashed = true;
+    }
+  }
 }
 
 // Actions
@@ -159,12 +170,17 @@ function render() {
     html = renderCoursesTab();
   } else if (state.activeTab === 'settings') {
     html = renderSettingsTab();
+  } else {
+    state.activeTab = 'tasks';
+    html = renderTasksTab();
   }
 
   appEl.innerHTML = html;
   
   // Create icons after innerHTML
-  lucide.createIcons();
+  if (window.lucide) {
+    lucide.createIcons();
+  }
 }
 
 function renderNav() {
@@ -473,7 +489,6 @@ function requestNotification() {
 let adderConfig = null;
 
 function openScheduleAdder(courseId) {
-  // Find highest existing lecture num
   const existing = state.tasks.filter(t => t.courseId === courseId).map(t => t.lectureName);
   let max = 0;
   existing.forEach(name => {
@@ -484,19 +499,23 @@ function openScheduleAdder(courseId) {
     }
   });
 
-  const now = new Date();
-  
   adderConfig = {
     courseId,
     startNum: max + 1,
+    add_mode: 'calendar', // 'calendar' or 'rows'
+    calendarDates: [],
+    calDeliveryCheck: false,
+    calDeliveryTime: '00:00',
+    calWatchCheck: true,
+    calWatchTime: '23:59',
+    calAssignCheck: false,
+    calAssignTime: '23:59',
     rows: [
       { id: generateId(), deliveryDate: '', deliveryTime: '', watchDate: '', watchTime: '23:59', assignDate: '', assignTime: '23:59' }
     ],
     isSelfDeadline: false
   };
   
-  // Actually, since we rewrite, let's just make it simple: 
-  // user adds multiple dates inside rows (since DayPicker is not here, dynamic rows of date inputs is easier).
   renderModal();
 }
 
@@ -520,35 +539,82 @@ function updateRow(id, field, value) {
   if (r) r[field] = value;
 }
 
+function switchAdderMode(mode) {
+  adderConfig.add_mode = mode;
+  renderModal();
+}
+
+function updateCalField(field, value) {
+  adderConfig[field] = value;
+  // Some fields might need re-render if they affect UI state
+  if (field.includes('Check')) renderModal();
+}
+
 function saveAdderTasks() {
   const newTasks = [];
   
-  adderConfig.rows.forEach((r, idx) => {
-    const lectureName = `第${adderConfig.startNum + idx}回`;
+  if (adderConfig.add_mode === 'rows') {
+    adderConfig.rows.forEach((r, idx) => {
+      const lectureName = `第${adderConfig.startNum + idx}回`;
+      if (r.deliveryDate) {
+        newTasks.push({
+          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'delivery', 
+          date: `${r.deliveryDate}T${r.deliveryTime || '00:00'}:00`, isSelfDeadline: false, completed: false
+        });
+      }
+      if (r.watchDate) {
+        newTasks.push({
+          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'watch', 
+          date: `${r.watchDate}T${r.watchTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
+        });
+      }
+      if (r.assignDate) {
+        newTasks.push({
+          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'assignment', 
+          date: `${r.assignDate}T${r.assignTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
+        });
+      }
+    });
+  } else {
+    // Calendar mode
+    if (adderConfig.calendarDates.length === 0) {
+      alert("カレンダーで日付を1つ以上選択してください");
+      return;
+    }
     
-    if (r.deliveryDate) {
-      newTasks.push({
-        id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'delivery', 
-        date: `${r.deliveryDate}T${r.deliveryTime || '00:00'}:00`, isSelfDeadline: false, completed: false
-      });
-    }
-    if (r.watchDate) {
-      newTasks.push({
-        id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'watch', 
-        date: `${r.watchDate}T${r.watchTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
-      });
-    }
-    if (r.assignDate) {
-      newTasks.push({
-        id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'assignment', 
-        date: `${r.assignDate}T${r.assignTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
-      });
-    }
-  });
+    // Sort dates chronologically
+    const sortedDates = [...adderConfig.calendarDates].sort((a,b) => new Date(a) - new Date(b));
+    
+    sortedDates.forEach((dateStr, idx) => {
+      const lectureName = `第${adderConfig.startNum + idx}回`;
+      if (adderConfig.calDeliveryCheck) {
+        newTasks.push({
+          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'delivery', 
+          date: `${dateStr}T${adderConfig.calDeliveryTime || '00:00'}:00`, isSelfDeadline: false, completed: false
+        });
+      }
+      if (adderConfig.calWatchCheck) {
+        newTasks.push({
+          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'watch', 
+          date: `${dateStr}T${adderConfig.calWatchTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
+        });
+      }
+      if (adderConfig.calAssignCheck) {
+        newTasks.push({
+          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'assignment', 
+          date: `${dateStr}T${adderConfig.calAssignTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
+        });
+      }
+    });
+  }
 
-  if (newTasks.length === 0) {
+  if (newTasks.length === 0 && adderConfig.add_mode === 'rows') {
     alert("日付を1つ以上設定してください");
     return;
+  }
+  if (newTasks.length === 0 && adderConfig.add_mode === 'calendar') {
+     alert("作成するタスクの種類（視聴期限など）を選択してください");
+     return;
   }
 
   state.tasks.push(...newTasks);
@@ -564,61 +630,135 @@ function renderModal() {
     return;
   }
 
-  const rowsHtml = adderConfig.rows.map((row, idx) => `
-    <div class="bg-white border text-sm border-slate-200 rounded-xl p-4 flex flex-col gap-3 relative overflow-hidden">
-      <div class="absolute top-0 right-0 bg-slate-100 text-slate-500 font-bold px-3 py-1 rounded-bl-xl text-xs">
-        第${adderConfig.startNum + idx}回
+  let contentHtml = '';
+
+  if (adderConfig.add_mode === 'rows') {
+    const rowsHtml = adderConfig.rows.map((row, idx) => `
+      <div class="bg-white border text-sm border-slate-200 rounded-xl p-4 flex flex-col gap-3 relative overflow-hidden">
+        <div class="absolute top-0 right-0 bg-slate-100 text-slate-500 font-bold px-3 py-1 rounded-bl-xl text-xs">
+          第${adderConfig.startNum + idx}回
+        </div>
+        ${idx > 0 ? `
+          <button onclick="removeAdderRow('${row.id}')" class="absolute top-2 right-14 text-slate-400 hover:text-red-500">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+          </button>
+        ` : ''}
+        <div class="grid grid-cols-[1fr_1fr] md:grid-cols-3 gap-3 w-full mt-4 md:mt-2">
+          <div class="flex flex-col gap-1 border-b md:border-b-0 md:border-r border-slate-100 pb-2 md:pb-0 md:pr-3">
+            <label class="text-xs font-bold text-slate-600">配信日</label>
+            <input type="date" value="${row.deliveryDate}" onchange="updateRow('${row.id}', 'deliveryDate', this.value)" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs" />
+            <input type="time" value="${row.deliveryTime}" onchange="updateRow('${row.id}', 'deliveryTime', this.value)" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs" />
+          </div>
+          <div class="flex flex-col gap-1 border-b md:border-b-0 md:border-r border-slate-100 pb-2 md:pb-0 md:px-3">
+            <label class="text-xs font-bold text-slate-600">視聴期限</label>
+            <input type="date" value="${row.watchDate}" onchange="updateRow('${row.id}', 'watchDate', this.value)" class="w-full bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs" />
+            <input type="time" value="${row.watchTime}" onchange="updateRow('${row.id}', 'watchTime', this.value)" class="w-full bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs" />
+          </div>
+          <div class="flex flex-col gap-1 md:pl-3 col-span-2 md:col-span-1">
+            <label class="text-xs font-bold text-slate-600">課題提出</label>
+            <input type="date" value="${row.assignDate}" onchange="updateRow('${row.id}', 'assignDate', this.value)" class="w-full bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs" />
+            <input type="time" value="${row.assignTime}" onchange="updateRow('${row.id}', 'assignTime', this.value)" class="w-full bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs" />
+          </div>
+        </div>
       </div>
-      ${idx > 0 ? `
-        <button onclick="removeAdderRow('${row.id}')" class="absolute top-2 right-14 text-slate-400 hover:text-red-500">
-          <i data-lucide="trash-2" class="w-4 h-4"></i>
-        </button>
-      ` : ''}
-      <div class="grid grid-cols-[1fr_1fr] md:grid-cols-3 gap-3 w-full mt-4 md:mt-2">
-        <div class="flex flex-col gap-1 border-b md:border-b-0 md:border-r border-slate-100 pb-2 md:pb-0 md:pr-3">
-          <label class="text-xs font-bold text-slate-600">配信日</label>
-          <input type="date" value="${row.deliveryDate}" onchange="updateRow('${row.id}', 'deliveryDate', this.value)" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs" />
-          <input type="time" value="${row.deliveryTime}" onchange="updateRow('${row.id}', 'deliveryTime', this.value)" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs" />
+    `).join('');
+    
+    contentHtml = `
+      <div class="p-6 overflow-y-auto bg-slate-50/30 flex flex-col gap-3">
+         ${rowsHtml}
+         <button onclick="addAdderRow()" class="mt-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-dashed border-slate-300 rounded-xl py-3 flex items-center justify-center gap-2 text-sm font-bold transition-colors">
+            <i data-lucide="plus" class="w-4 h-4"></i> 次の講義を追加
+         </button>
+      </div>
+    `;
+  } else {
+    // Calendar mode HTML
+    contentHtml = `
+      <div class="flex flex-col md:flex-row p-6 overflow-y-auto bg-slate-50/30 gap-6">
+        <div class="flex flex-col gap-2 relative z-10 w-full md:w-auto">
+          <p class="text-sm font-bold text-slate-700 flex items-center gap-1.5"><i data-lucide="calendar" class="w-4 h-4"></i> 日付を複数選択</p>
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-2 flatpickr-wrapper">
+             <input type="text" id="multi-calendar" class="hidden" />
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">※選択した順番に関わらず、日付順に第${adderConfig.startNum}回〜が割り当てられます。</p>
         </div>
-        <div class="flex flex-col gap-1 border-b md:border-b-0 md:border-r border-slate-100 pb-2 md:pb-0 md:px-3">
-          <label class="text-xs font-bold text-slate-600">視聴期限</label>
-          <input type="date" value="${row.watchDate}" onchange="updateRow('${row.id}', 'watchDate', this.value)" class="w-full bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs" />
-          <input type="time" value="${row.watchTime}" onchange="updateRow('${row.id}', 'watchTime', this.value)" class="w-full bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs" />
-        </div>
-        <div class="flex flex-col gap-1 md:pl-3 col-span-2 md:col-span-1">
-          <label class="text-xs font-bold text-slate-600">課題提出</label>
-          <input type="date" value="${row.assignDate}" onchange="updateRow('${row.id}', 'assignDate', this.value)" class="w-full bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs" />
-          <input type="time" value="${row.assignTime}" onchange="updateRow('${row.id}', 'assignTime', this.value)" class="w-full bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs" />
+        
+        <div class="flex-1 flex flex-col gap-4">
+           <p class="text-sm font-bold text-slate-700 mt-2 md:mt-0 flex items-center gap-1.5"><i data-lucide="settings-2" class="w-4 h-4"></i> 一括設定 (選択した全日に適用)</p>
+           
+           <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col gap-4">
+             <!-- Delivery -->
+             <div class="flex items-center gap-3">
+               <label class="flex items-center gap-2 cursor-pointer group">
+                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calDeliveryCheck ? 'bg-blue-600 border-blue-600' : 'bg-white border-slate-300 group-hover:border-blue-400'}">
+                    ${adderConfig.calDeliveryCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
+                  </div>
+                  <input type="checkbox" onchange="updateCalField('calDeliveryCheck', this.checked)" class="sr-only" ${adderConfig.calDeliveryCheck ? 'checked' : ''} />
+                  <span class="text-xs font-bold text-slate-600 select-none">配信日</span>
+               </label>
+               <input type="time" value="${adderConfig.calDeliveryTime}" onchange="updateCalField('calDeliveryTime', this.value)" class="bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}" />
+             </div>
+             
+             <!-- Watch -->
+             <div class="flex items-center gap-3">
+               <label class="flex items-center gap-2 cursor-pointer group">
+                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calWatchCheck ? 'bg-amber-500 border-amber-500' : 'bg-white border-slate-300 group-hover:border-amber-400'}">
+                    ${adderConfig.calWatchCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
+                  </div>
+                  <input type="checkbox" onchange="updateCalField('calWatchCheck', this.checked)" class="sr-only" ${adderConfig.calWatchCheck ? 'checked' : ''} />
+                  <span class="text-xs font-bold text-slate-600 select-none">視聴期限</span>
+               </label>
+               <input type="time" value="${adderConfig.calWatchTime}" onchange="updateCalField('calWatchTime', this.value)" class="bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}" />
+             </div>
+             
+             <!-- Assign -->
+             <div class="flex items-center gap-3">
+               <label class="flex items-center gap-2 cursor-pointer group">
+                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calAssignCheck ? 'bg-red-500 border-red-500' : 'bg-white border-slate-300 group-hover:border-red-400'}">
+                    ${adderConfig.calAssignCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
+                  </div>
+                  <input type="checkbox" onchange="updateCalField('calAssignCheck', this.checked)" class="sr-only" ${adderConfig.calAssignCheck ? 'checked' : ''} />
+                  <span class="text-xs font-bold text-slate-600 select-none">課題提出</span>
+               </label>
+               <input type="time" value="${adderConfig.calAssignTime}" onchange="updateCalField('calAssignTime', this.value)" class="bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}" />
+             </div>
+           </div>
         </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }
 
   root.innerHTML = `
     <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
-      <div class="bg-white max-w-2xl w-full rounded-2xl shadow-xl flex flex-col m-auto max-h-[95vh] overflow-hidden border border-slate-200">
+      <div class="bg-white max-w-3xl w-full rounded-2xl shadow-xl flex flex-col m-auto max-h-[95vh] overflow-hidden border border-slate-200">
         
-        <div class="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50/50 shrink-0">
-          <div class="flex items-center gap-3">
-            <div class="bg-blue-100 text-blue-600 p-2 rounded-xl">
-              <i data-lucide="calendar-days" class="w-6 h-6"></i>
+        <div class="flex flex-col border-b border-slate-100 bg-slate-50/50 shrink-0">
+          <div class="flex justify-between items-center p-6 pb-4">
+            <div class="flex items-center gap-3">
+              <div class="bg-blue-100 text-blue-600 p-2 rounded-xl">
+                <i data-lucide="calendar-days" class="w-6 h-6"></i>
+              </div>
+              <div class="flex flex-col">
+                <h4 class="font-extrabold text-slate-800 text-lg tracking-tight">スケジュール追加</h4>
+                <p class="text-[11px] text-slate-500 font-medium mt-0.5">授業のスケジュールを一括設定または個別に設定できます</p>
+              </div>
             </div>
-            <div class="flex flex-col">
-              <h4 class="font-extrabold text-slate-800 text-lg tracking-tight">行ベースでスケジュール追加</h4>
-              <p class="text-[11px] text-slate-500 font-medium mt-0.5">必要な日時の入力欄を埋めてください (空欄の項目は無視されます)</p>
-            </div>
+            <button onclick="closeScheduleAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
           </div>
-          <button onclick="closeScheduleAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
-            <i data-lucide="x" class="w-5 h-5"></i>
-          </button>
+          
+          <div class="px-6 flex gap-2 w-full">
+            <button onclick="switchAdderMode('calendar')" class="pb-3 px-2 border-b-2 transition-colors text-sm font-bold flex items-center gap-1.5 ${adderConfig.add_mode === 'calendar' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">
+               <i data-lucide="calendar-plus" class="w-4 h-4"></i> カレンダーで一括作成
+            </button>
+            <button onclick="switchAdderMode('rows')" class="pb-3 px-2 border-b-2 transition-colors text-sm font-bold flex items-center gap-1.5 ${adderConfig.add_mode === 'rows' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">
+               <i data-lucide="list-plus" class="w-4 h-4"></i> 個別に行を追加
+            </button>
+          </div>
         </div>
 
-        <div class="p-6 overflow-y-auto bg-slate-50/30 flex flex-col gap-3">
-           ${rowsHtml}
-           <button onclick="addAdderRow()" class="mt-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-dashed border-slate-300 rounded-xl py-3 flex items-center justify-center gap-2 text-sm font-bold transition-colors">
-              <i data-lucide="plus" class="w-4 h-4"></i> 次の講義を追加
-           </button>
-        </div>
+        ${contentHtml}
 
         <div class="p-4 md:p-6 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
           <label class="flex items-center gap-3 cursor-pointer group">
@@ -637,33 +777,59 @@ function renderModal() {
       </div>
     </div>
   `;
-  lucide.createIcons();
+  if (window.lucide) {
+    lucide.createIcons();
+  }
+
+  if (adderConfig.add_mode === 'calendar' && typeof window.flatpickr !== 'undefined') {
+     flatpickr('#multi-calendar', {
+        inline: true,
+        mode: "multiple",
+        locale: "ja",
+        defaultDate: adderConfig.calendarDates,
+        onChange: function(selectedDates, dateStr, instance) {
+           adderConfig.calendarDates = selectedDates.map(d => {
+              const off = d.getTimezoneOffset();
+              const adjusted = new Date(d.getTime() - (off*60*1000));
+              return adjusted.toISOString().split('T')[0];
+           });
+        }
+     });
+  }
 }
 
 // Setup background notification checks
 function setupNotifications() {
-  if (!('Notification' in window)) return;
-  const check = () => {
-    if (Notification.permission !== 'granted') return;
-    const now = new Date();
-    const tomorrow = new Date(now.getTime() + 24*3600*1000);
-    const upcoming = state.tasks.filter(t => {
-      if (t.completed) return false;
-      const d = new Date(t.date);
-      return d > now && d < tomorrow;
-    });
+  try {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    const check = () => {
+      try {
+        if (Notification.permission !== 'granted') return;
+        const now = new Date();
+        const tomorrow = new Date(now.getTime() + 24*3600*1000);
+        const upcoming = state.tasks.filter(t => {
+          if (t.completed) return false;
+          const d = new Date(t.date);
+          return d > now && d < tomorrow;
+        });
 
-    upcoming.forEach(t => {
-      const key = 'notified_' + t.id;
-      const last = localStorage.getItem(key);
-      if (!last || (now.getTime() - parseInt(last, 10) > 12*3600*1000)) {
-        new Notification("期限のリマインダー", { body: 'もうすぐ期限です', icon: '/icon.png' });
-        localStorage.setItem(key, now.getTime().toString());
+        upcoming.forEach(t => {
+          const key = 'notified_' + t.id;
+          const last = localStorage.getItem(key);
+          if (!last || (now.getTime() - parseInt(last, 10) > 12*3600*1000)) {
+            new Notification("期限のリマインダー", { body: 'もうすぐ期限です', icon: '/icon.png' });
+            localStorage.setItem(key, now.getTime().toString());
+          }
+        });
+      } catch (e) {
+        console.error('Notification check failed:', e);
       }
-    });
-  };
-  check();
-  setInterval(check, 3600 * 1000);
+    };
+    check();
+    setInterval(check, 3600 * 1000);
+  } catch (e) {
+    console.error('Setup notifications failed:', e);
+  }
 }
 
 
