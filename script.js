@@ -3,7 +3,7 @@ const STORAGE_KEY = 'ondemand_app_data';
 
 let state = {
   activeTab: 'tasks',
-  taskSortMode: 'course', // 'course' or 'date'
+  taskSortMode: 'date', // 'course' or 'date'
   courses: [],
   tasks: [],
   showAddCourse: false,
@@ -15,7 +15,11 @@ let state = {
   editCourseDesc: '',
   editingLecture: null, // { courseId, oldName, newName }
   editingTaskId: null,
-  editTaskData: null
+  editTaskData: null,
+  notifications: [
+    { id: generateId(), daysBefore: 1, time: '20:00' },
+    { id: generateId(), daysBefore: 0, time: '08:00' }
+  ]
 };
 
 // Generate UUID-like short ID
@@ -37,6 +41,9 @@ function loadData() {
         lectureName: t.lectureName || '無題の講義',
         isSelfDeadline: t.isSelfDeadline !== undefined ? t.isSelfDeadline : (t.deadlineType === 'self')
       }));
+      if (parsed.notifications) {
+        state.notifications = parsed.notifications;
+      }
     }
   } catch(e) {
     console.error('Failed to access localStorage:', e);
@@ -48,7 +55,8 @@ function saveData() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       courses: state.courses,
-      tasks: state.tasks
+      tasks: state.tasks,
+      notifications: state.notifications
     }));
   } catch (e) {
     console.error('Failed to set localStorage:', e);
@@ -104,13 +112,23 @@ function deleteTask(id) {
 }
 
 function exportData() {
-  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ courses: state.courses, tasks: state.tasks }));
+  const data = JSON.stringify({
+    courses: state.courses,
+    tasks: state.tasks,
+    notifications: state.notifications
+  });
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.setAttribute("href", dataStr);
-  a.setAttribute("download", "ondemand_backup.json");
+  a.href = url;
+  a.download = "ondemand_backup.json";
+  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
-  a.remove();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 100);
 }
 
 function importData(jsonString) {
@@ -119,6 +137,9 @@ function importData(jsonString) {
     if (parsed.courses && parsed.tasks) {
       state.courses = parsed.courses;
       state.tasks = parsed.tasks;
+      if (parsed.notifications) {
+        state.notifications = parsed.notifications;
+      }
       saveData();
       render();
       alert("データのインポートに成功しました");
@@ -689,15 +710,38 @@ function renderSettingsTab() {
       
       <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-4">
         <div>
-          <h3 class="font-bold text-slate-700 text-sm mb-2 flex items-center gap-2">
-             <i data-lucide="bell" class="w-4 h-4"></i> 通知設定
+          <h3 class="font-bold text-slate-700 text-sm mb-2 mt-4 flex items-center gap-2">
+             <i data-lucide="clock" class="w-4 h-4"></i> 通知時間のカスタム設定
           </h3>
           <div class="text-sm text-slate-600 mb-3 leading-relaxed">
-             端末のプッシュ通知を許可すると、アプリを開いていなくても期限が近づいた際にリマインドを受け取ることができます。<br/><span class="text-xs text-slate-400">※ブラウザやOSの仕様により、アプリを開いている間のみ機能する場合があります。</span>
+             端末のプッシュ通知を許可すると、アプリを開いていなくても期限が近づいた際にリマインドを受け取ることができます。<br/><span class="text-xs text-slate-400">※ブラウザやOSの仕様により、アプリを開いている間のみ機能する場合があります。時間未定のタスクは通知されません。</span>
           </div>
-          <button onclick="requestNotification()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors">
-            通知の許可をリクエスト
-          </button>
+
+          <div class="flex flex-col gap-2 mb-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
+            ${state.notifications.map((n, i) => `
+              <div class="flex items-center gap-2 text-sm bg-white p-2 border border-slate-200 rounded">
+                 <select onchange="updateNotification(${i}, 'daysBefore', this.value)" class="border border-slate-300 rounded px-2 py-1 outline-none">
+                    <option value="0" ${n.daysBefore == 0 ? 'selected' : ''}>当日</option>
+                    <option value="1" ${n.daysBefore == 1 ? 'selected' : ''}>前日</option>
+                    <option value="2" ${n.daysBefore == 2 ? 'selected' : ''}>2日前</option>
+                    <option value="3" ${n.daysBefore == 3 ? 'selected' : ''}>3日前</option>
+                 </select>
+                 <span class="text-slate-500 font-bold">の</span>
+                 <input type="time" value="${n.time}" onchange="updateNotification(${i}, 'time', this.value)" class="border border-slate-300 rounded px-2 py-1 outline-none text-xs w-[80px]" />
+                 <button onclick="removeNotification(${i})" class="text-slate-400 hover:text-red-600 p-1 ml-auto"><i data-lucide="x" class="w-4 h-4"></i></button>
+              </div>
+            `).join('')}
+            <button onclick="addNotification()" class="text-blue-600 font-bold text-sm text-center hover:bg-blue-50 py-2 border border-dashed border-blue-200 rounded mt-1 transition-colors">+ 新しい通知時間を追加</button>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <button onclick="requestNotification()" class="bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+              通知の許可をリクエスト
+            </button>
+            <button onclick="previewNotification()" class="border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+              <i data-lucide="play" class="w-4 h-4 inline-block mr-1"></i>プレビュー送信
+            </button>
+          </div>
         </div>
 
         <hr class="border-slate-100" />
@@ -707,7 +751,8 @@ function renderSettingsTab() {
              <i data-lucide="alert-circle" class="w-4 h-4"></i> データ管理
           </h3>
           <div class="text-sm text-slate-600 mb-3 leading-relaxed">
-             データはログイン不要でブラウザに自動保存されます。機種変更の際などはデータをエクスポートして新しい端末でインポートしてください。
+             データはログイン不要でブラウザに自動保存されます。機種変更の際などはデータをエクスポートして新しい端末でインポートしてください。<br/>
+             <span class="text-xs text-slate-400">※プレビュー環境でエクスポートボタンが機能しない場合は、アプリを「新しいタブで開く」か右上のメニューから開いてからお試しください。</span>
           </div>
           <div class="flex flex-wrap gap-2">
             <button onclick="exportData()" class="flex-1 min-w-[120px] bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
@@ -742,6 +787,44 @@ function requestNotification() {
     });
   } else {
     alert('ご利用のブラウザは通知をサポートしていません。');
+  }
+}
+
+function updateNotification(index, field, value) {
+  if (field === 'daysBefore') {
+    state.notifications[index].daysBefore = parseInt(value, 10);
+  } else {
+    state.notifications[index].time = value;
+  }
+  // Change id so it resets the triggered flag for old configuration
+  state.notifications[index].id = generateId();
+  saveData();
+  render();
+}
+
+function removeNotification(index) {
+  state.notifications.splice(index, 1);
+  saveData();
+  render();
+}
+
+function addNotification() {
+  state.notifications.push({ id: generateId(), daysBefore: 1, time: '20:00' });
+  saveData();
+  render();
+}
+
+function previewNotification() {
+  if (!("Notification" in window)) {
+    return alert('ブラウザが通知をサポートしていません。');
+  }
+  if (Notification.permission === 'granted') {
+    new Notification("通知プレビュー", {
+       body: "このように通知が表示されます。",
+       icon: "/icon.png"
+    });
+  } else {
+    alert('通知が許可されていません。「通知の許可をリクエスト」を押してください。');
   }
 }
 
@@ -1077,27 +1160,42 @@ function setupNotifications() {
       try {
         if (Notification.permission !== 'granted') return;
         const now = new Date();
-        const tomorrow = new Date(now.getTime() + 24*3600*1000);
-        const upcoming = state.tasks.filter(t => {
-          if (t.completed) return false;
-          const d = new Date(t.date);
-          return d > now && d < tomorrow;
-        });
+        
+        state.tasks.forEach(task => {
+          if (task.completed) return;
+          if (task.date.includes('T00:00:00') && task.type === 'delivery') return; // 時間未定
+          
+          state.notifications.forEach(sched => {
+             const notifiedKey = `notified_${task.id}_${sched.id}`;
+             if (localStorage.getItem(notifiedKey)) return;
 
-        upcoming.forEach(t => {
-          const key = 'notified_' + t.id;
-          const last = localStorage.getItem(key);
-          if (!last || (now.getTime() - parseInt(last, 10) > 12*3600*1000)) {
-            new Notification("期限のリマインダー", { body: 'もうすぐ期限です', icon: '/icon.png' });
-            localStorage.setItem(key, now.getTime().toString());
-          }
+             const taskDateObj = new Date(task.date);
+             const targetDateObj = new Date(taskDateObj.getTime());
+             targetDateObj.setDate(targetDateObj.getDate() - sched.daysBefore);
+             
+             const [hStr, mStr] = sched.time.split(':');
+             targetDateObj.setHours(parseInt(hStr, 10), parseInt(mStr, 10), 0, 0);
+
+             // Notify if 'now' is past the target trigger time, but not older than 1 hour (to avoid too many old notifications firing when opening the app)
+             const timeDiff = now.getTime() - targetDateObj.getTime();
+             if (timeDiff >= 0 && timeDiff <= 3600 * 1000) {
+                 const course = state.courses.find(c => c.id === task.courseId);
+                 const cname = course ? course.name : '不明な科目';
+                 const tlabel = typeLabels[task.type] || 'タスク';
+                 new Notification(`${cname} - ${task.lectureName}`, {
+                     body: `${tlabel}の期限が近づいています (${formatTaskDate(task.date)})`,
+                     icon: '/icon.png'
+                 });
+                 localStorage.setItem(notifiedKey, '1');
+             }
+          });
         });
       } catch (e) {
         console.error('Notification check failed:', e);
       }
     };
     check();
-    setInterval(check, 3600 * 1000);
+    setInterval(check, 60 * 1000); // Check every minute instead of every hour
   } catch (e) {
     console.error('Setup notifications failed:', e);
   }
