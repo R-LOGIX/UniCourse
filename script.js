@@ -19,7 +19,9 @@ let state = {
   notifications: [
     { id: generateId(), daysBefore: 1, time: '20:00' },
     { id: generateId(), daysBefore: 0, time: '08:00' }
-  ]
+  ],
+  notificationTitleTemplate: '{course} - {task}',
+  notificationBodyTemplate: '{label}の期限が迫っています ({date})'
 };
 
 // Generate UUID-like short ID
@@ -44,6 +46,8 @@ function loadData() {
       if (parsed.notifications) {
         state.notifications = parsed.notifications;
       }
+      if (parsed.notificationTitleTemplate) state.notificationTitleTemplate = parsed.notificationTitleTemplate;
+      if (parsed.notificationBodyTemplate) state.notificationBodyTemplate = parsed.notificationBodyTemplate;
     }
   } catch(e) {
     console.error('Failed to access localStorage:', e);
@@ -56,7 +60,9 @@ function saveData() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       courses: state.courses,
       tasks: state.tasks,
-      notifications: state.notifications
+      notifications: state.notifications,
+      notificationTitleTemplate: state.notificationTitleTemplate,
+      notificationBodyTemplate: state.notificationBodyTemplate
     }));
   } catch (e) {
     console.error('Failed to set localStorage:', e);
@@ -116,7 +122,9 @@ function exportData() {
     const data = JSON.stringify({
       courses: state.courses,
       tasks: state.tasks,
-      notifications: state.notifications
+      notifications: state.notifications,
+      notificationTitleTemplate: state.notificationTitleTemplate,
+      notificationBodyTemplate: state.notificationBodyTemplate
     });
     const blob = new Blob([data], { type: 'application/json' });
     const url = window.URL.createObjectURL(blob);
@@ -139,7 +147,9 @@ function copyData() {
   const data = JSON.stringify({
     courses: state.courses,
     tasks: state.tasks,
-    notifications: state.notifications
+    notifications: state.notifications,
+    notificationTitleTemplate: state.notificationTitleTemplate,
+    notificationBodyTemplate: state.notificationBodyTemplate
   });
   if (navigator.clipboard) {
     navigator.clipboard.writeText(data).then(() => {
@@ -161,6 +171,8 @@ function importData(jsonString) {
       if (parsed.notifications) {
         state.notifications = parsed.notifications;
       }
+      if (parsed.notificationTitleTemplate) state.notificationTitleTemplate = parsed.notificationTitleTemplate;
+      if (parsed.notificationBodyTemplate) state.notificationBodyTemplate = parsed.notificationBodyTemplate;
       saveData();
       render();
       alert("データのインポートに成功しました");
@@ -755,13 +767,34 @@ function renderSettingsTab() {
             <button onclick="addNotification()" class="text-blue-600 font-bold text-sm text-center hover:bg-blue-50 py-2 border border-dashed border-blue-200 rounded mt-1 transition-colors">+ 新しい通知時間を追加</button>
           </div>
 
-          <div class="flex flex-wrap gap-2">
+          <div class="flex flex-wrap gap-2 mb-6">
             <button onclick="requestNotification()" class="bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
               通知の許可をリクエスト
             </button>
             <button onclick="previewNotification()" class="border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              <i data-lucide="play" class="w-4 h-4 inline-block mr-1"></i>プレビュー送信
+              <i data-lucide="play" class="w-4 h-4 inline-block mr-1"></i>プレビュー表示
             </button>
+          </div>
+
+          <h3 class="font-bold text-slate-700 text-sm mb-2 mt-2 flex items-center gap-2">
+             <i data-lucide="message-square" class="w-4 h-4"></i> 通知内容のカスタマイズ
+          </h3>
+          <div class="text-xs text-slate-500 mb-3 leading-relaxed">
+             以下の変数が使用できます:<br/>
+             <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">{course}</code>: 科目名 
+             <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">{task}</code>: タイトル 
+             <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">{label}</code>: 種類 
+             <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">{date}</code>: 期限
+          </div>
+          <div class="flex flex-col gap-3">
+             <div>
+               <label class="text-xs font-bold text-slate-600 mb-1 block">通知タイトル</label>
+               <input type="text" value="${state.notificationTitleTemplate}" onchange="updateTemplate('title', this.value)" class="w-full border border-slate-300 rounded px-3 py-2 outline-none text-sm text-slate-700 focus:border-blue-500" />
+             </div>
+             <div>
+               <label class="text-xs font-bold text-slate-600 mb-1 block">通知メッセージ</label>
+               <textarea onchange="updateTemplate('body', this.value)" class="w-full border border-slate-300 rounded px-3 py-2 outline-none text-sm text-slate-700 focus:border-blue-500 min-h-[60px]">${state.notificationBodyTemplate}</textarea>
+             </div>
           </div>
         </div>
 
@@ -807,21 +840,77 @@ function handleImport(e) {
   e.target.value = '';
 }
 
+let clipboardModalOpen = false;
+
+function openClipboardModal() {
+  clipboardModalOpen = true;
+  renderClipboardModal();
+}
+
+function closeClipboardModal() {
+  clipboardModalOpen = false;
+  renderClipboardModal();
+}
+
+function handleClipboardImport(e) {
+  e.preventDefault();
+  const text = document.getElementById('clipboard-import-text').value;
+  if (!text) return;
+  importData(text);
+  closeClipboardModal();
+}
+
+function renderClipboardModal() {
+  const root = document.getElementById('modal-root');
+  if (!clipboardModalOpen) {
+    if (root.innerHTML.includes('テキストからインポート')) {
+      root.innerHTML = '';
+    }
+    return;
+  }
+  
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeClipboardModal()">
+      <div class="bg-white rounded-2xl w-full max-w-md shadow-xl flex flex-col max-h-[90vh]">
+        <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+          <h2 class="font-bold text-slate-800">テキストからインポート</h2>
+          <button onclick="closeClipboardModal()" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <form onsubmit="handleClipboardImport(event)" class="p-4 flex flex-col gap-4 overflow-y-auto">
+          <p class="text-sm text-slate-600">エクスポート等でコピーしてある文字データを、下の枠内に貼り付けて「インポートを確定」を押してください。</p>
+          <textarea id="clipboard-import-text" class="w-full border border-slate-300 rounded-lg p-3 min-h-[150px] outline-none text-sm text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-400" placeholder='{"courses": [...], "tasks": [...]}'></textarea>
+          <div class="flex gap-2">
+            <button type="button" onclick="closeClipboardModal()" class="flex-1 px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors">キャンセル</button>
+            <button type="submit" class="flex-1 px-4 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors">インポートを確定</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  if (window.lucide) lucide.createIcons();
+}
+
 function importFromClipboard() {
   if (navigator.clipboard && navigator.clipboard.readText) {
     navigator.clipboard.readText().then(text => {
-      if (text) {
-        importData(text);
+      // If we got text easily without prompt, and it looks like JSON
+      if (text && text.trim().startsWith('{')) {
+        openClipboardModal();
+        setTimeout(() => {
+          const ta = document.getElementById('clipboard-import-text');
+          if (ta) ta.value = text;
+        }, 50);
+      } else {
+        openClipboardModal();
       }
     }).catch(() => {
-      const text = prompt("コピーしたデータを貼り付けてください:");
-      if (text) importData(text);
+      openClipboardModal();
     });
   } else {
-    const text = prompt("コピーしたデータを貼り付けてください:");
-    if (text) importData(text);
+    openClipboardModal();
   }
 }
+
 
 function requestNotification() {
   try {
@@ -851,6 +940,15 @@ function updateNotification(index, field, value) {
   render();
 }
 
+function updateTemplate(field, value) {
+  if (field === 'title') {
+    state.notificationTitleTemplate = value;
+  } else if (field === 'body') {
+    state.notificationBodyTemplate = value;
+  }
+  saveData();
+}
+
 function removeNotification(index) {
   state.notifications.splice(index, 1);
   saveData();
@@ -864,26 +962,24 @@ function addNotification() {
 }
 
 function previewNotification() {
-  try {
-    if (!("Notification" in window)) {
-      alert('ブラウザが通知をサポートしていません。\n\n【プレビュー】\nこのように通知が表示されます。');
-      return;
-    }
-    if (Notification.permission === 'granted') {
-      try {
-        new Notification("通知プレビュー", {
-           body: "このように通知が表示されます。",
-           icon: "/icon.png"
-        });
-      } catch (err) {
-        alert("プレビュー環境等の制限によりOSのシステム通知が表示できません。\n\n【プレビュー表示】\nこのように通知が表示されます。");
-      }
-    } else {
-      alert('通知が許可されていないか、現在の環境でブロックされています。\n\n【プレビュー表示】\nこのように通知が表示されます。');
-    }
-  } catch (e) {
-    alert('エラーが発生しました: ' + e.message + '\n\n【プレビュー表示】\nこのように通知が表示されます。');
-  }
+  const cname = "プレビュー科目";
+  const taskName = "第1回 レポート";
+  const tlabel = "課題";
+  const fakeDateStr = new Date(Date.now() + 86400000).toISOString();
+  
+  let title = state.notificationTitleTemplate || '{course} - {task}';
+  title = title.replace('{course}', cname)
+               .replace('{task}', taskName)
+               .replace('{label}', tlabel)
+               .replace('{date}', formatTaskDate(fakeDateStr));
+               
+  let body = state.notificationBodyTemplate || '{label}の期限が迫っています ({date})';
+  body = body.replace('{course}', cname)
+              .replace('{task}', taskName)
+              .replace('{label}', tlabel)
+              .replace('{date}', formatTaskDate(fakeDateStr));
+
+  triggerNotification(title, body, 'preview');
 }
 
 // ------ SCHEDULE ADDER MODAL ------
@@ -1211,6 +1307,59 @@ function renderModal() {
 }
 
 // Setup background notification checks
+function showToast(title, body) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'bg-slate-900/95 text-white p-4 rounded-xl shadow-2xl flex items-start gap-4 transform -translate-y-4 opacity-0 transition-all duration-500 ease-out pointer-events-auto backdrop-blur-md border border-slate-700/50';
+  toast.innerHTML = `
+    <img src="/icon.png" class="w-10 h-10 rounded-lg object-cover bg-slate-800" onerror="this.style.display='none'">
+    <div class="flex-1 flex flex-col gap-1 min-w-0">
+      <div class="font-bold text-sm leading-tight text-slate-100">${title}</div>
+      <div class="text-xs text-slate-300 leading-snug">${body.replace(/\\n/g, '<br>')}</div>
+    </div>
+    <button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-white p-1 -mt-1 -mr-1 transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button>
+  `;
+  container.appendChild(toast);
+  if (window.lucide) lucide.createIcons();
+  
+  requestAnimationFrame(() => {
+    toast.classList.remove('-translate-y-4', 'opacity-0');
+  });
+  
+  setTimeout(() => {
+    toast.classList.add('-translate-y-4', 'opacity-0');
+    setTimeout(() => toast.remove(), 500);
+  }, 5000);
+}
+
+async function triggerNotification(title, body, tag = 'note') {
+  if ('serviceWorker' in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (registration && Notification.permission === 'granted') {
+        registration.showNotification(title, {
+          body,
+          icon: '/icon.png',
+          tag: tag,
+          requireInteraction: false
+        });
+        return;
+      }
+    } catch(e) {}
+  }
+  
+  if ("Notification" in window && window.Notification.permission === 'granted') {
+    try {
+      new Notification(title, { body, icon: '/icon.png', tag });
+    } catch(err) {
+      showToast(title, body);
+    }
+  } else {
+    showToast(title, body);
+  }
+}
+
 function setupNotifications() {
   try {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
@@ -1240,10 +1389,20 @@ function setupNotifications() {
                  const course = state.courses.find(c => c.id === task.courseId);
                  const cname = course ? course.name : '不明な科目';
                  const tlabel = typeLabels[task.type] || 'タスク';
-                 new Notification(`${cname} - ${task.lectureName}`, {
-                     body: `${tlabel}の期限が近づいています (${formatTaskDate(task.date)})`,
-                     icon: '/icon.png'
-                 });
+                 
+                 let title = state.notificationTitleTemplate || '{course} - {task}';
+                 title = title.replace('{course}', cname)
+                              .replace('{task}', task.lectureName)
+                              .replace('{label}', tlabel)
+                              .replace('{date}', formatTaskDate(task.date));
+                              
+                 let body = state.notificationBodyTemplate || '{label}の期限が迫っています ({date})';
+                 body = body.replace('{course}', cname)
+                             .replace('{task}', task.lectureName)
+                             .replace('{label}', tlabel)
+                             .replace('{date}', formatTaskDate(task.date));
+                 
+                 triggerNotification(title, body, `task_${task.id}_${sched.id}`);
                  localStorage.setItem(notifiedKey, '1');
              }
           });
@@ -1264,3 +1423,6 @@ function setupNotifications() {
 loadData();
 render();
 setupNotifications();
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW registration failed', err));
+}
