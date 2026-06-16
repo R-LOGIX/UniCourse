@@ -1,9 +1,4 @@
 // script.js
-// --- バックエンド設定 ---
-// GitHub Pages等でホスティングし、バックエンド(server.js)を別のシステム(Render等)で動かしている場合は
-// ここにそのURLを設定してください（例: 'https://my-backend.onrender.com'）
-const API_BASE_URL = '';
-
 const STORAGE_KEY = 'ondemand_app_data';
 
 let state = {
@@ -21,13 +16,10 @@ let state = {
   editingLecture: null, // { courseId, oldName, newName }
   editingTaskId: null,
   editTaskData: null,
-  notifications: [
-    { id: generateId(), daysBefore: 1, time: '20:00' },
-    { id: generateId(), daysBefore: 0, time: '08:00' }
-  ],
-  notificationTitleTemplate: '{course} - {task}',
-  notificationBodyTemplate: '{label}の期限が迫っています ({date})',
-  syncId: generateId() + generateId() // For sync
+  gcalClientId: '',
+  gcalToken: null,
+  gcalOptions: [],
+  gcalTargetId: 'primary'
 };
 
 // Generate UUID-like short ID
@@ -49,12 +41,9 @@ function loadData() {
         lectureName: t.lectureName || '無題の講義',
         isSelfDeadline: t.isSelfDeadline !== undefined ? t.isSelfDeadline : (t.deadlineType === 'self')
       }));
-      if (parsed.notifications) {
-        state.notifications = parsed.notifications;
-      }
-      if (parsed.notificationTitleTemplate) state.notificationTitleTemplate = parsed.notificationTitleTemplate;
-      if (parsed.notificationBodyTemplate) state.notificationBodyTemplate = parsed.notificationBodyTemplate;
-      if (parsed.syncId) state.syncId = parsed.syncId;
+      if (parsed.gcalClientId) state.gcalClientId = parsed.gcalClientId;
+      if (parsed.gcalTargetId) state.gcalTargetId = parsed.gcalTargetId;
+      // We don't save the ephemeral token to bypass frequent expiration without refresh token
     }
   } catch(e) {
     console.error('Failed to access localStorage:', e);
@@ -67,24 +56,9 @@ function saveData() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       courses: state.courses,
       tasks: state.tasks,
-      notifications: state.notifications,
-      notificationTitleTemplate: state.notificationTitleTemplate,
-      notificationBodyTemplate: state.notificationBodyTemplate,
-      syncId: state.syncId
+      gcalClientId: state.gcalClientId,
+      gcalTargetId: state.gcalTargetId
     }));
-    
-    fetch(API_BASE_URL + '/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        syncId: state.syncId,
-        tasks: state.tasks,
-        courses: state.courses,
-        notifications: state.notifications,
-        titleTemplate: state.notificationTitleTemplate,
-        bodyTemplate: state.notificationBodyTemplate
-      })
-    }).catch(e => console.log('Sync err'));
     
   } catch (e) {
     console.error('Failed to set localStorage:', e);
@@ -143,10 +117,7 @@ function exportData() {
   try {
     const data = JSON.stringify({
       courses: state.courses,
-      tasks: state.tasks,
-      notifications: state.notifications,
-      notificationTitleTemplate: state.notificationTitleTemplate,
-      notificationBodyTemplate: state.notificationBodyTemplate
+      tasks: state.tasks
     });
     const blob = new Blob([data], { type: 'application/json' });
     const url = window.URL.createObjectURL(blob);
@@ -168,10 +139,7 @@ function exportData() {
 function copyData() {
   const data = JSON.stringify({
     courses: state.courses,
-    tasks: state.tasks,
-    notifications: state.notifications,
-    notificationTitleTemplate: state.notificationTitleTemplate,
-    notificationBodyTemplate: state.notificationBodyTemplate
+    tasks: state.tasks
   });
   if (navigator.clipboard) {
     navigator.clipboard.writeText(data).then(() => {
@@ -190,11 +158,6 @@ function importData(jsonString) {
     if (parsed.courses && parsed.tasks) {
       state.courses = parsed.courses;
       state.tasks = parsed.tasks;
-      if (parsed.notifications) {
-        state.notifications = parsed.notifications;
-      }
-      if (parsed.notificationTitleTemplate) state.notificationTitleTemplate = parsed.notificationTitleTemplate;
-      if (parsed.notificationBodyTemplate) state.notificationBodyTemplate = parsed.notificationBodyTemplate;
       saveData();
       render();
       alert("データのインポートに成功しました");
@@ -765,70 +728,54 @@ function renderSettingsTab() {
       
       <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-4">
         <div>
-          <h3 class="font-bold text-slate-700 text-sm mb-2 mt-4 flex items-center gap-2">
-             <i data-lucide="clock" class="w-4 h-4"></i> 通知時間のカスタム設定
-          </h3>
-          <div class="text-sm text-slate-600 mb-3 leading-relaxed">
-             端末のプッシュ通知を許可すると、アプリを開いていなくても期限が近づいた際にリマインドを受け取ることができます。<br/><span class="text-xs text-slate-400">※ブラウザやOSの仕様により、アプリを開いている間のみ機能する場合があります。時間未定のタスクは通知されません。</span>
-          </div>
-
-          <div class="flex flex-col gap-2 mb-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
-            ${state.notifications.map((n, i) => `
-              <div class="flex items-center gap-2 text-sm bg-white p-2 border border-slate-200 rounded">
-                 <select onchange="updateNotification(${i}, 'daysBefore', this.value)" class="border border-slate-300 rounded px-2 py-1 outline-none">
-                    <option value="0" ${n.daysBefore == 0 ? 'selected' : ''}>当日</option>
-                    <option value="1" ${n.daysBefore == 1 ? 'selected' : ''}>前日</option>
-                    <option value="2" ${n.daysBefore == 2 ? 'selected' : ''}>2日前</option>
-                    <option value="3" ${n.daysBefore == 3 ? 'selected' : ''}>3日前</option>
-                 </select>
-                 <span class="text-slate-500 font-bold">の</span>
-                 <input type="time" value="${n.time}" onchange="updateNotification(${i}, 'time', this.value)" class="border border-slate-300 rounded px-2 py-1 outline-none text-xs w-[80px]" />
-                 <button onclick="removeNotification(${i})" class="text-slate-400 hover:text-red-600 p-1 ml-auto"><i data-lucide="x" class="w-4 h-4"></i></button>
-              </div>
-            `).join('')}
-            <button onclick="addNotification()" class="text-blue-600 font-bold text-sm text-center hover:bg-blue-50 py-2 border border-dashed border-blue-200 rounded mt-1 transition-colors">+ 新しい通知時間を追加</button>
-          </div>
-
-          <div class="flex flex-wrap gap-2 mb-6">
-            <button onclick="requestNotification()" class="bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              通知の許可をリクエスト
-            </button>
-            <button onclick="previewNotification()" class="border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              <i data-lucide="play" class="w-4 h-4 inline-block mr-1"></i>プレビュー表示
-            </button>
-          </div>
-
-          <h3 class="font-bold text-slate-700 text-sm mb-2 mt-6 flex items-center gap-2 border-t border-slate-100 pt-6">
-             <i data-lucide="smartphone" class="w-4 h-4 text-green-600"></i> LINE連携 (確実な通知)
-          </h3>
-          <p class="text-xs text-slate-500 mb-3">
-             Webブラウザでの通知が届かない場合や、LINEで確実にお知らせを受け取りたい場合はLINE連携がおすすめです。
-          </p>
-          <div class="flex flex-wrap gap-2 mb-6">
-            <button onclick="openLineLinkModal()" class="bg-[#06C755] hover:bg-[#05b34c] text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              LINEと連携する
-            </button>
-          </div>
-
           <h3 class="font-bold text-slate-700 text-sm mb-2 mt-2 flex items-center gap-2">
-             <i data-lucide="message-square" class="w-4 h-4"></i> 通知内容のカスタマイズ
+             <i data-lucide="calendar" class="w-4 h-4 text-green-600"></i> Googleカレンダー自動登録
           </h3>
-          <div class="text-xs text-slate-500 mb-3 leading-relaxed">
-             以下の変数が使用できます:<br/>
-             <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">{course}</code>: 科目名 
-             <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">{task}</code>: タイトル 
-             <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">{label}</code>: 種類 
-             <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">{date}</code>: 期限
+          <p class="text-xs text-slate-500 mb-4 leading-relaxed">
+             Google Calendar APIを使用して、スケジュールを直接カレンダーに登録します。<br/>
+             連携には <a href="https://console.cloud.google.com/" target="_blank" class="text-blue-600 underline">Google Cloud Console</a> で取得したOAuth 2.0 クライアントIDが必要です。
+          </p>
+          <div class="flex flex-col gap-3 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-100">
+             <div>
+                <label class="text-xs font-bold text-slate-600 mb-1 block">Google OAuth クライアントID</label>
+                <input type="text" id="gcal_client_id" value="${state.gcalClientId || ''}" onchange="state.gcalClientId=this.value; saveData();" placeholder="例: xxx.apps.googleusercontent.com" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
+             </div>
+             
+             ${state.gcalToken ? `
+               <div class="flex items-center gap-2 text-xs mt-2 p-2 bg-green-50 border border-green-200 rounded-lg">
+                  <i data-lucide="check-circle-2" class="w-4 h-4 text-green-600"></i>
+                  <span class="text-green-700 font-bold">Googleカレンダー連携済み</span>
+                  <button onclick="gcalLogout()" class="ml-auto text-slate-500 hover:text-red-600 transition-colors bg-white px-2 py-1 rounded border border-slate-200">連携解除</button>
+               </div>
+               
+               <div class="mt-2">
+                  <label class="text-xs font-bold text-slate-600 mb-1 block">登録先カレンダー</label>
+                  <select id="gcal_target_id" onchange="state.gcalTargetId=this.value; saveData();" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                     <option value="primary">メインカレンダー (デフォルト)</option>
+                     ${state.gcalOptions ? state.gcalOptions.map(opt => `<option value="${opt.id}" ${state.gcalTargetId === opt.id ? 'selected' : ''}>${opt.summary}</option>`).join('') : ''}
+                  </select>
+               </div>
+               
+               <button onclick="exportToGoogleCalendar()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm w-full mt-2">
+                  <i data-lucide="cloud-upload" class="w-4 h-4"></i> 未完了タスクをGoogleカレンダーに登録
+               </button>
+             ` : `
+               <button onclick="gcalLogin()" class="mt-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-2.5 px-4 rounded-lg shadow-sm text-sm flex items-center justify-center gap-2 transition-colors">
+                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5"> Google アカウントでログイン
+               </button>
+             `}
           </div>
-          <div class="flex flex-col gap-3">
-             <div>
-               <label class="text-xs font-bold text-slate-600 mb-1 block">通知タイトル</label>
-               <input type="text" value="${state.notificationTitleTemplate}" onchange="updateTemplate('title', this.value)" class="w-full border border-slate-300 rounded px-3 py-2 outline-none text-sm text-slate-700 focus:border-blue-500" />
-             </div>
-             <div>
-               <label class="text-xs font-bold text-slate-600 mb-1 block">通知メッセージ</label>
-               <textarea onchange="updateTemplate('body', this.value)" class="w-full border border-slate-300 rounded px-3 py-2 outline-none text-sm text-slate-700 focus:border-blue-500 min-h-[60px]">${state.notificationBodyTemplate}</textarea>
-             </div>
+
+          <h3 class="font-bold text-slate-700 text-sm mb-2 flex items-center gap-2 border-t border-slate-100 pt-6">
+             <i data-lucide="calendar" class="w-4 h-4 text-blue-600"></i> 手動カレンダーエクスポート (.ics)
+          </h3>
+          <p class="text-xs text-slate-500 mb-3 leading-relaxed">
+             すべてのタスクをカレンダーファイル(ICS)としてダウンロードします。
+          </p>
+          <div class="flex flex-wrap gap-2 mb-2">
+            <button onclick="generateICSAndDownloadAll()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
+              <i data-lucide="download" class="w-4 h-4"></i> カレンダーファイルを出力
+            </button>
           </div>
         </div>
 
@@ -894,83 +841,94 @@ function handleClipboardImport(e) {
   closeClipboardModal();
 }
 
-let lineLinkModalOpen = false;
-let currentLineCode = '';
-
-async function openLineLinkModal() {
-  if (!state.syncId) {
-    state.syncId = generateId() + generateId();
-    saveData();
-  }
-  lineLinkModalOpen = true;
-  renderLineLinkModal();
+function generateICSAndDownloadAll() {
+  const events = [];
   
-  try {
-    const res = await fetch(API_BASE_URL + '/api/link-code', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ syncId: state.syncId })
-    });
-    const data = await res.json();
-    currentLineCode = data.code;
-    renderLineLinkModal();
-  } catch(e) {
-    alert("サーバーと通信できませんでした。プレビュー環境の場合はバックエンドが起動していない可能性があります。");
-    closeLineLinkModal();
-  }
-}
+  state.tasks.forEach(task => {
+    if (task.completed) return;
+    const course = state.courses.find(c => c.id === task.courseId);
+    if (!course) return;
+    
+    const cname = course.name;
+    const tlabel = typeLabels[task.type] || 'タスク';
+    
+    const d = new Date(task.date);
+    const isAllDay = task.type === 'delivery'; // 配信日はすべて終日予定として扱う
+    
+    const pad = n => n.toString().padStart(2, '0');
+    
+    const summary = `${cname} - ${task.lectureName} [${tlabel}]`;
+    const description = `タスク種類: ${tlabel}\\n講義名: ${task.lectureName}\\n科目: ${cname}\\n自動カレンダー同期`;
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    
+    if (isAllDay) {
+       const dtstart = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
+       const nextDay = new Date(d);
+       nextDay.setDate(d.getDate() + 1);
+       const dtend = `${nextDay.getFullYear()}${pad(nextDay.getMonth()+1)}${pad(nextDay.getDate())}`;
+       
+       events.push(`BEGIN:VEVENT
+UID:${task.id}@ondemand-app
+DTSTAMP:${stamp}
+DTSTART;VALUE=DATE:${dtstart}
+DTEND;VALUE=DATE:${dtend}
+SUMMARY:${summary}
+DESCRIPTION:${description}
+END:VEVENT`);
+    } else {
+       const utc = new Date(d.getTime() + d.getTimezoneOffset() * 60000);
+       const dtString = utc.getFullYear() + pad(utc.getMonth()+1) + pad(utc.getDate()) + 'T' + pad(utc.getHours()) + pad(utc.getMinutes()) + pad(utc.getSeconds()) + 'Z';
+       
+       const endDate = new Date(utc.getTime() + 60*60*1000);
+       const dtend = endDate.getFullYear() + pad(endDate.getMonth()+1) + pad(endDate.getDate()) + 'T' + pad(endDate.getHours()) + pad(endDate.getMinutes()) + pad(endDate.getSeconds()) + 'Z';
+       
+       events.push(`BEGIN:VTODO
+UID:${task.id}@ondemand-app
+DTSTAMP:${stamp}
+DUE:${dtString}
+SUMMARY:${summary}
+DESCRIPTION:${description}
+STATUS:NEEDS-ACTION
+END:VTODO`);
 
-function closeLineLinkModal() {
-  lineLinkModalOpen = false;
-  currentLineCode = '';
-  renderLineLinkModal();
-}
-
-function renderLineLinkModal() {
-  const root = document.getElementById('modal-root');
-  if (!lineLinkModalOpen) {
-    if (root.innerHTML.includes('LINE連携')) {
-      root.innerHTML = '';
+       // 24時間前のリマインド用タスク
+       const reminderUtc = new Date(utc.getTime() - 24*60*60*1000);
+       
+       const rStart = reminderUtc.getFullYear() + pad(reminderUtc.getMonth()+1) + pad(reminderUtc.getDate()) + 'T' + pad(reminderUtc.getHours()) + pad(reminderUtc.getMinutes()) + pad(reminderUtc.getSeconds()) + 'Z';
+       
+       events.push(`BEGIN:VTODO
+UID:${task.id}-rem1@ondemand-app
+DTSTAMP:${stamp}
+DUE:${rStart}
+SUMMARY:[確実なリマインド] ${summary}
+DESCRIPTION:${description}
+STATUS:NEEDS-ACTION
+END:VTODO`);
     }
+  });
+  
+  if (events.length === 0) {
+    alert("カレンダーに出力できる未完了タスクがありません。");
     return;
   }
   
-  root.innerHTML = `
-    <div class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeLineLinkModal()">
-      <div class="bg-white rounded-2xl w-full max-w-md shadow-xl flex flex-col max-h-[90vh]">
-        <div class="p-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 class="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="smartphone" class="w-5 h-5 text-green-600"></i> LINE連携</h2>
-          <button onclick="closeLineLinkModal()" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
-        </div>
-        <div class="p-6 flex flex-col items-center gap-4 overflow-y-auto">
-          <p class="text-sm text-slate-600 text-center mb-2">
-            公式LINEアカウントを友だち追加し、以下の連携コードをトーク画面で送信してください。
-          </p>
-          
-          <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 w-full text-center">
-            <div class="text-xs text-slate-500 mb-1 font-bold">連携コード</div>
-            <div class="text-3xl font-mono tracking-widest text-slate-800 select-all">${currentLineCode || '取得中...'}</div>
-          </div>
-          
-          <div class="text-xs text-slate-500 mt-2 p-3 bg-blue-50 text-blue-700 rounded-lg text-left">
-             <i data-lucide="info" class="w-4 h-4 inline mb-0.5"></i>
-             <b>【開発者向けの環境構築手順】</b><br/>
-             1. <a href="https://developers.line.biz/" target="_blank" class="underline">LINE Developers</a>でチャネル(Messaging API)を作成<br/>
-             2. <code>server.js</code> をRenderやHeroku、Cloud Run等のサーバー環境にデプロイ<br/>
-             3. サーバーの環境変数に <code>LINE_CHANNEL_ACCESS_TOKEN</code> と <code>LINE_CHANNEL_SECRET</code> を設定<br/>
-             4. <code>script.js</code> の先頭行にある <code>API_BASE_URL</code> にデプロイしたサーバーのURLを設定 (Github Pagesでフロントエンドをホスティングする場合)<br/>
-             5. LINE DevelopersのWebook URLに <code>[デプロイ元URL]/api/webhook</code> を設定して有効化<br/>
-             ※ ローカル環境でのテストは ngrok を使用して Webhook URLを転送してください。
-          </div>
-          
-          <div class="w-full mt-2">
-            <button onclick="closeLineLinkModal()" class="w-full px-4 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors">閉じる</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-  if (window.lucide) lucide.createIcons();
+  const icsStr = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//OnDemandApp//Calendar Export//JA
+CALSCALE:GREGORIAN
+${events.join('\n')}
+END:VCALENDAR`;
+
+  const blob = new Blob([icsStr], { type: 'text/calendar;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = window.URL.createObjectURL(blob);
+  a.download = "ondemand_schedule.ics";
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+  }, 100);
 }
 
 function renderClipboardModal() {
@@ -1025,75 +983,7 @@ function importFromClipboard() {
 }
 
 
-function requestNotification() {
-  try {
-    if ("Notification" in window) {
-      Notification.requestPermission().then(r => {
-         alert(r === 'granted' ? '通知が許可されました。' : '通知が拒否されました。設定から変更してください。');
-      }).catch(e => {
-         alert('通知の許可リクエストがブロックされました。\nブラウザのURLバーの左側（鍵マーク等）から通知を許可してください。');
-      });
-    } else {
-      alert('ご利用のブラウザは通知をサポートしていません。');
-    }
-  } catch (e) {
-    alert('通知の許可リクエストがブロックされました。\nブラウザの設定をご確認ください。');
-  }
-}
-
-function updateNotification(index, field, value) {
-  if (field === 'daysBefore') {
-    state.notifications[index].daysBefore = parseInt(value, 10);
-  } else {
-    state.notifications[index].time = value;
-  }
-  // Change id so it resets the triggered flag for old configuration
-  state.notifications[index].id = generateId();
-  saveData();
-  render();
-}
-
-function updateTemplate(field, value) {
-  if (field === 'title') {
-    state.notificationTitleTemplate = value;
-  } else if (field === 'body') {
-    state.notificationBodyTemplate = value;
-  }
-  saveData();
-}
-
-function removeNotification(index) {
-  state.notifications.splice(index, 1);
-  saveData();
-  render();
-}
-
-function addNotification() {
-  state.notifications.push({ id: generateId(), daysBefore: 1, time: '20:00' });
-  saveData();
-  render();
-}
-
-function previewNotification() {
-  const cname = "プレビュー科目";
-  const taskName = "第1回 レポート";
-  const tlabel = "課題";
-  const fakeDateStr = new Date(Date.now() + 86400000).toISOString();
-  
-  let title = state.notificationTitleTemplate || '{course} - {task}';
-  title = title.replace('{course}', cname)
-               .replace('{task}', taskName)
-               .replace('{label}', tlabel)
-               .replace('{date}', formatTaskDate(fakeDateStr));
-               
-  let body = state.notificationBodyTemplate || '{label}の期限が迫っています ({date})';
-  body = body.replace('{course}', cname)
-              .replace('{task}', taskName)
-              .replace('{label}', tlabel)
-              .replace('{date}', formatTaskDate(fakeDateStr));
-
-  triggerNotification(title, body, 'preview');
-}
+// End of Clipboard logic
 
 // ------ SCHEDULE ADDER MODAL ------
 let adderConfig = null;
@@ -1419,123 +1309,162 @@ function renderModal() {
   }
 }
 
-// Setup background notification checks
-function showToast(title, body) {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-  const toast = document.createElement('div');
-  toast.className = 'bg-slate-900/95 text-white p-4 rounded-xl shadow-2xl flex items-start gap-4 transform -translate-y-4 opacity-0 transition-all duration-500 ease-out pointer-events-auto backdrop-blur-md border border-slate-700/50';
-  toast.innerHTML = `
-    <img src="/icon.png" class="w-10 h-10 rounded-lg object-cover bg-slate-800" onerror="this.style.display='none'">
-    <div class="flex-1 flex flex-col gap-1 min-w-0">
-      <div class="font-bold text-sm leading-tight text-slate-100">${title}</div>
-      <div class="text-xs text-slate-300 leading-snug">${body.replace(/\\n/g, '<br>')}</div>
-    </div>
-    <button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-white p-1 -mt-1 -mr-1 transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button>
-  `;
-  container.appendChild(toast);
-  if (window.lucide) lucide.createIcons();
-  
-  requestAnimationFrame(() => {
-    toast.classList.remove('-translate-y-4', 'opacity-0');
+// End of logic
+
+// ------ GOOGLE CALENDAR ------
+let tokenClient;
+
+function createTokenClient() {
+  if (!state.gcalClientId || typeof google === 'undefined') return false;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: state.gcalClientId,
+    scope: 'https://www.googleapis.com/auth/calendar',
+    callback: (tokenResponse) => {
+      if (tokenResponse && tokenResponse.access_token) {
+        state.gcalToken = tokenResponse.access_token;
+        saveData();
+        fetchGcalList();
+      }
+    },
   });
-  
-  setTimeout(() => {
-    toast.classList.add('-translate-y-4', 'opacity-0');
-    setTimeout(() => toast.remove(), 500);
-  }, 5000);
+  return true;
 }
 
-async function triggerNotification(title, body, tag = 'note') {
-  if ('serviceWorker' in navigator) {
-    try {
-      const registration = await navigator.serviceWorker.getRegistration();
-      if (registration && Notification.permission === 'granted') {
-        registration.showNotification(title, {
-          body,
-          icon: '/icon.png',
-          tag: tag,
-          requireInteraction: false
-        });
-        return;
-      }
-    } catch(e) {}
+function gcalLogin() {
+  if (!state.gcalClientId) {
+    alert("先にGoogle OAuth クライアントIDを設定してください。");
+    return;
   }
-  
-  if ("Notification" in window && window.Notification.permission === 'granted') {
-    try {
-      new Notification(title, { body, icon: '/icon.png', tag });
-    } catch(err) {
-      showToast(title, body);
+  if (!tokenClient) {
+    if (!createTokenClient()) {
+       alert("Google APIの読み込みに失敗しました。時間をおいて再試行してください。");
+       return;
     }
-  } else {
-    showToast(title, body);
   }
+  tokenClient.requestAccessToken({ prompt: 'consent' });
 }
 
-function setupNotifications() {
+function gcalLogout() {
+  state.gcalToken = null;
+  state.gcalOptions = [];
+  saveData();
+  render();
+}
+
+async function fetchGcalList() {
+  if (!state.gcalToken) return;
   try {
-    if (typeof window === 'undefined' || !('Notification' in window)) return;
-    const check = () => {
-      try {
-        if (Notification.permission !== 'granted') return;
-        const now = new Date();
-        
-        state.tasks.forEach(task => {
-          if (task.completed) return;
-          if (task.date.includes('T00:00:00') && task.type === 'delivery') return; // 時間未定
-          
-          state.notifications.forEach(sched => {
-             const notifiedKey = `notified_${task.id}_${sched.id}`;
-             if (localStorage.getItem(notifiedKey)) return;
-
-             const taskDateObj = new Date(task.date);
-             const targetDateObj = new Date(taskDateObj.getTime());
-             targetDateObj.setDate(targetDateObj.getDate() - sched.daysBefore);
-             
-             const [hStr, mStr] = sched.time.split(':');
-             targetDateObj.setHours(parseInt(hStr, 10), parseInt(mStr, 10), 0, 0);
-
-             // Notify if 'now' is past the target trigger time, but not older than 1 hour (to avoid too many old notifications firing when opening the app)
-             const timeDiff = now.getTime() - targetDateObj.getTime();
-             if (timeDiff >= 0 && timeDiff <= 3600 * 1000) {
-                 const course = state.courses.find(c => c.id === task.courseId);
-                 const cname = course ? course.name : '不明な科目';
-                 const tlabel = typeLabels[task.type] || 'タスク';
-                 
-                 let title = state.notificationTitleTemplate || '{course} - {task}';
-                 title = title.replace('{course}', cname)
-                              .replace('{task}', task.lectureName)
-                              .replace('{label}', tlabel)
-                              .replace('{date}', formatTaskDate(task.date));
-                              
-                 let body = state.notificationBodyTemplate || '{label}の期限が迫っています ({date})';
-                 body = body.replace('{course}', cname)
-                             .replace('{task}', task.lectureName)
-                             .replace('{label}', tlabel)
-                             .replace('{date}', formatTaskDate(task.date));
-                 
-                 triggerNotification(title, body, `task_${task.id}_${sched.id}`);
-                 localStorage.setItem(notifiedKey, '1');
-             }
-          });
-        });
-      } catch (e) {
-        console.error('Notification check failed:', e);
-      }
-    };
-    check();
-    setInterval(check, 60 * 1000); // Check every minute instead of every hour
-  } catch (e) {
-    console.error('Setup notifications failed:', e);
+    const res = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
+      headers: { Authorization: `Bearer ${state.gcalToken}` }
+    });
+    if (res.status === 401) {
+      gcalLogout();
+      return;
+    }
+    const data = await res.json();
+    if (data.items) {
+      state.gcalOptions = data.items.map(item => ({ id: item.id, summary: item.summary }));
+      saveData();
+      render();
+    }
+  } catch(e) {
+    console.error(e);
   }
 }
 
+async function exportToGoogleCalendar() {
+  if (!state.gcalToken) return;
+  const calendarId = state.gcalTargetId || 'primary';
+  const tasksToExport = state.tasks.filter(t => !t.completed);
+  if (tasksToExport.length === 0) {
+    alert("登録できる未完了タスクがありません。");
+    return;
+  }
+  
+  if (!confirm(`未完了のタスク ${tasksToExport.length} 件をGoogleカレンダーに登録しますか？\n(既に登録済みのタスクが重複して登録される可能性があります)`)) return;
 
-// Init
+  const pad = n => n.toString().padStart(2, '0');
+  let successCount = 0;
+  let hasError = false;
+
+  const reqHeaders = {
+    'Authorization': `Bearer ${state.gcalToken}`,
+    'Content-Type': 'application/json'
+  };
+
+  for (const task of tasksToExport) {
+    const course = state.courses.find(c => c.id === task.courseId);
+    if (!course) continue;
+    
+    const d = new Date(task.date);
+    const isAllDay = task.type === 'delivery';
+    
+    const summary = `${course.name} - ${task.lectureName} [${typeLabels[task.type]}]`;
+    const description = `タスク種類: ${typeLabels[task.type]}\n講義名: ${task.lectureName}\n科目: ${course.name}\n自動カレンダー同期`;
+    
+    const pushEvent = async (eventBody) => {
+        try {
+          const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
+            method: 'POST',
+            headers: reqHeaders,
+            body: JSON.stringify(eventBody)
+          });
+          if (res.ok) successCount++;
+          else hasError = true;
+        } catch(e) {
+          console.error(e);
+          hasError = true;
+        }
+    };
+    
+    if (isAllDay) {
+       const dateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+       const nextDay = new Date(d);
+       nextDay.setDate(d.getDate() + 1);
+       const endDateStr = `${nextDay.getFullYear()}-${pad(nextDay.getMonth()+1)}-${pad(nextDay.getDate())}`;
+       
+       await pushEvent({
+         summary, description,
+         start: { date: dateStr },
+         end: { date: endDateStr }
+       });
+    } else {
+       // Start of task as deadline time
+       const startUtc = new Date(d.getTime() + d.getTimezoneOffset() * 60000);
+       const endUtc = new Date(startUtc.getTime() + 60*60*1000);
+
+       await pushEvent({
+         summary, description,
+         start: { dateTime: d.toISOString() },
+         end: { dateTime: new Date(d.getTime() + 60*60*1000).toISOString() }
+       });
+       
+       // Reminder task 24 hours ago
+       const rStart = new Date(d.getTime() - 24*60*60*1000);
+       const rEnd = new Date(rStart.getTime() + 60*60*1000);
+       await pushEvent({
+         summary: `[確実なリマインド] ${summary}`, description,
+         start: { dateTime: rStart.toISOString() },
+         end: { dateTime: rEnd.toISOString() }
+       });
+    }
+  }
+  
+  if (hasError) {
+    alert(`${successCount} 件の予定を登録しましたが、一部でエラーが発生しました。`);
+  } else {
+    alert(`${successCount} 件の予定を登録しました。`);
+  }
+}
+
+// ------ INIT ------
 loadData();
 render();
-setupNotifications();
+if (state.gcalToken) {
+  setTimeout(() => {
+    fetchGcalList();
+  }, 1000);
+}
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW registration failed', err));
 }
