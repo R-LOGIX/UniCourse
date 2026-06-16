@@ -21,7 +21,8 @@ let state = {
     { id: generateId(), daysBefore: 0, time: '08:00' }
   ],
   notificationTitleTemplate: '{course} - {task}',
-  notificationBodyTemplate: '{label}の期限が迫っています ({date})'
+  notificationBodyTemplate: '{label}の期限が迫っています ({date})',
+  syncId: generateId() + generateId() // For sync
 };
 
 // Generate UUID-like short ID
@@ -48,6 +49,7 @@ function loadData() {
       }
       if (parsed.notificationTitleTemplate) state.notificationTitleTemplate = parsed.notificationTitleTemplate;
       if (parsed.notificationBodyTemplate) state.notificationBodyTemplate = parsed.notificationBodyTemplate;
+      if (parsed.syncId) state.syncId = parsed.syncId;
     }
   } catch(e) {
     console.error('Failed to access localStorage:', e);
@@ -62,8 +64,23 @@ function saveData() {
       tasks: state.tasks,
       notifications: state.notifications,
       notificationTitleTemplate: state.notificationTitleTemplate,
-      notificationBodyTemplate: state.notificationBodyTemplate
+      notificationBodyTemplate: state.notificationBodyTemplate,
+      syncId: state.syncId
     }));
+    
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        syncId: state.syncId,
+        tasks: state.tasks,
+        courses: state.courses,
+        notifications: state.notifications,
+        titleTemplate: state.notificationTitleTemplate,
+        bodyTemplate: state.notificationBodyTemplate
+      })
+    }).catch(e => console.log('Sync err'));
+    
   } catch (e) {
     console.error('Failed to set localStorage:', e);
     if (!storageCrashed) {
@@ -776,6 +793,18 @@ function renderSettingsTab() {
             </button>
           </div>
 
+          <h3 class="font-bold text-slate-700 text-sm mb-2 mt-6 flex items-center gap-2 border-t border-slate-100 pt-6">
+             <i data-lucide="smartphone" class="w-4 h-4 text-green-600"></i> LINE連携 (確実な通知)
+          </h3>
+          <p class="text-xs text-slate-500 mb-3">
+             Webブラウザでの通知が届かない場合や、LINEで確実にお知らせを受け取りたい場合はLINE連携がおすすめです。
+          </p>
+          <div class="flex flex-wrap gap-2 mb-6">
+            <button onclick="openLineLinkModal()" class="bg-[#06C755] hover:bg-[#05b34c] text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+              LINEと連携する
+            </button>
+          </div>
+
           <h3 class="font-bold text-slate-700 text-sm mb-2 mt-2 flex items-center gap-2">
              <i data-lucide="message-square" class="w-4 h-4"></i> 通知内容のカスタマイズ
           </h3>
@@ -858,6 +887,80 @@ function handleClipboardImport(e) {
   if (!text) return;
   importData(text);
   closeClipboardModal();
+}
+
+let lineLinkModalOpen = false;
+let currentLineCode = '';
+
+async function openLineLinkModal() {
+  if (!state.syncId) {
+    state.syncId = generateId() + generateId();
+    saveData();
+  }
+  lineLinkModalOpen = true;
+  renderLineLinkModal();
+  
+  try {
+    const res = await fetch('/api/link-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ syncId: state.syncId })
+    });
+    const data = await res.json();
+    currentLineCode = data.code;
+    renderLineLinkModal();
+  } catch(e) {
+    alert("サーバーと通信できませんでした。プレビュー環境の場合はバックエンドが起動していない可能性があります。");
+    closeLineLinkModal();
+  }
+}
+
+function closeLineLinkModal() {
+  lineLinkModalOpen = false;
+  currentLineCode = '';
+  renderLineLinkModal();
+}
+
+function renderLineLinkModal() {
+  const root = document.getElementById('modal-root');
+  if (!lineLinkModalOpen) {
+    if (root.innerHTML.includes('LINE連携')) {
+      root.innerHTML = '';
+    }
+    return;
+  }
+  
+  root.innerHTML = `
+    <div class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeLineLinkModal()">
+      <div class="bg-white rounded-2xl w-full max-w-md shadow-xl flex flex-col max-h-[90vh]">
+        <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+          <h2 class="font-bold text-slate-800 flex items-center gap-2"><i data-lucide="smartphone" class="w-5 h-5 text-green-600"></i> LINE連携</h2>
+          <button onclick="closeLineLinkModal()" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div class="p-6 flex flex-col items-center gap-4 overflow-y-auto">
+          <p class="text-sm text-slate-600 text-center mb-2">
+            公式LINEアカウントを友だち追加し、以下の連携コードをトーク画面で送信してください。
+          </p>
+          
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 w-full text-center">
+            <div class="text-xs text-slate-500 mb-1 font-bold">連携コード</div>
+            <div class="text-3xl font-mono tracking-widest text-slate-800 select-all">${currentLineCode || '取得中...'}</div>
+          </div>
+          
+          <div class="text-xs text-slate-500 mt-2 p-3 bg-blue-50 text-blue-700 rounded-lg">
+             <i data-lucide="info" class="w-4 h-4 inline mb-0.5"></i>
+             この機能を使うには、環境変数 <b>LINE_CHANNEL_ACCESS_TOKEN</b> を設定し、バックエンドを稼働させる必要があります。<br/>
+             現在はモックとしてコードを発行しています。
+          </div>
+          
+          <div class="w-full mt-2">
+            <button onclick="closeLineLinkModal()" class="w-full px-4 py-3 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors">閉じる</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  if (window.lucide) lucide.createIcons();
 }
 
 function renderClipboardModal() {
