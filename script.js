@@ -112,23 +112,44 @@ function deleteTask(id) {
 }
 
 function exportData() {
+  try {
+    const data = JSON.stringify({
+      courses: state.courses,
+      tasks: state.tasks,
+      notifications: state.notifications
+    });
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "ondemand_backup.json";
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+  } catch (e) {
+    alert("エラーが発生しました: " + e.message + "\n\n代わりに「テキストでコピー」を使用してバックアップしてください。");
+  }
+}
+
+function copyData() {
   const data = JSON.stringify({
     courses: state.courses,
     tasks: state.tasks,
     notifications: state.notifications
   });
-  const blob = new Blob([data], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = "ondemand_backup.json";
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, 100);
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(data).then(() => {
+      alert("データをクリップボードにコピーしました。テキストファイル等に貼り付けて保存してください。");
+    }).catch(() => {
+      prompt("以下のテキストをコピーして保存してください:", data);
+    });
+  } else {
+    prompt("以下のテキストをコピーして保存してください:", data);
+  }
 }
 
 function importData(jsonString) {
@@ -754,14 +775,20 @@ function renderSettingsTab() {
              データはログイン不要でブラウザに自動保存されます。機種変更の際などはデータをエクスポートして新しい端末でインポートしてください。<br/>
              <span class="text-xs text-slate-400">※プレビュー環境でエクスポートボタンが機能しない場合は、アプリを「新しいタブで開く」か右上のメニューから開いてからお試しください。</span>
           </div>
-          <div class="flex flex-wrap gap-2">
+           <div class="flex flex-wrap gap-2">
             <button onclick="exportData()" class="flex-1 min-w-[120px] bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              <i data-lucide="download" class="w-4 h-4"></i> エクスポート
+              <i data-lucide="download" class="w-4 h-4"></i> ファイル保存
+            </button>
+            <button onclick="copyData()" class="flex-1 min-w-[120px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 border border-slate-200">
+              <i data-lucide="copy" class="w-4 h-4"></i> テキストでコピー
             </button>
             <label class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer">
               <i data-lucide="upload" class="w-4 h-4"></i> インポート
               <input type="file" accept=".json" class="hidden" onchange="handleImport(event)" />
             </label>
+          </div>
+          <div class="mt-2 text-center w-full">
+            <button onclick="importFromClipboard()" class="text-xs text-blue-600 hover:underline font-bold py-1">クリップボードからインポート</button>
           </div>
         </div>
       </div>
@@ -780,13 +807,35 @@ function handleImport(e) {
   e.target.value = '';
 }
 
-function requestNotification() {
-  if ("Notification" in window) {
-    Notification.requestPermission().then(r => {
-       alert(r === 'granted' ? '通知が許可されました。' : '通知が拒否されました。設定から変更してください。');
+function importFromClipboard() {
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(text => {
+      if (text) {
+        importData(text);
+      }
+    }).catch(() => {
+      const text = prompt("コピーしたデータを貼り付けてください:");
+      if (text) importData(text);
     });
   } else {
-    alert('ご利用のブラウザは通知をサポートしていません。');
+    const text = prompt("コピーしたデータを貼り付けてください:");
+    if (text) importData(text);
+  }
+}
+
+function requestNotification() {
+  try {
+    if ("Notification" in window) {
+      Notification.requestPermission().then(r => {
+         alert(r === 'granted' ? '通知が許可されました。' : '通知が拒否されました。設定から変更してください。');
+      }).catch(e => {
+         alert('通知の許可リクエストがブロックされました。\nブラウザのURLバーの左側（鍵マーク等）から通知を許可してください。');
+      });
+    } else {
+      alert('ご利用のブラウザは通知をサポートしていません。');
+    }
+  } catch (e) {
+    alert('通知の許可リクエストがブロックされました。\nブラウザの設定をご確認ください。');
   }
 }
 
@@ -815,16 +864,25 @@ function addNotification() {
 }
 
 function previewNotification() {
-  if (!("Notification" in window)) {
-    return alert('ブラウザが通知をサポートしていません。');
-  }
-  if (Notification.permission === 'granted') {
-    new Notification("通知プレビュー", {
-       body: "このように通知が表示されます。",
-       icon: "/icon.png"
-    });
-  } else {
-    alert('通知が許可されていません。「通知の許可をリクエスト」を押してください。');
+  try {
+    if (!("Notification" in window)) {
+      alert('ブラウザが通知をサポートしていません。\n\n【プレビュー】\nこのように通知が表示されます。');
+      return;
+    }
+    if (Notification.permission === 'granted') {
+      try {
+        new Notification("通知プレビュー", {
+           body: "このように通知が表示されます。",
+           icon: "/icon.png"
+        });
+      } catch (err) {
+        alert("プレビュー環境等の制限によりOSのシステム通知が表示できません。\n\n【プレビュー表示】\nこのように通知が表示されます。");
+      }
+    } else {
+      alert('通知が許可されていないか、現在の環境でブロックされています。\n\n【プレビュー表示】\nこのように通知が表示されます。');
+    }
+  } catch (e) {
+    alert('エラーが発生しました: ' + e.message + '\n\n【プレビュー表示】\nこのように通知が表示されます。');
   }
 }
 
