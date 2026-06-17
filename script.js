@@ -301,6 +301,8 @@ function exportData() {
     const a = document.createElement('a');
     a.href = url;
     a.download = "unicourse_backup.ics";
+    a.target = "_blank"; // Apps inside iframes/webviews can crash if they try to download directly in same tab
+    a.rel = "noopener noreferrer";
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
@@ -311,6 +313,7 @@ function exportData() {
     
     state.lastExportTime = Date.now();
     saveData();
+    showToast("エクスポートを開始しました");
   } catch (e) {
     showToast("エラーが発生しました: " + e.message, "error");
   }
