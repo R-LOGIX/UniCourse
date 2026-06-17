@@ -661,7 +661,7 @@ function renderTasksTab() {
                            <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
                          </select>
                          <input type="date" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
-                         <input type="time" id="edit-time-input" oninput="state.editTaskData.timeStr=this.value" value="${state.editTaskData.timeStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[100px]" />
+                         <button type="button" onclick="openCustomTimePicker('${state.editTaskData.timeStr}', 'setEditTaskTime')" class="bg-white border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[70px] text-center whitespace-nowrap overflow-hidden">${state.editTaskData.timeStr || '00:00'}</button>
                          <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" onchange="state.editTaskData.isSelfDeadline=this.checked" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
                       </div>
                       <div class="flex justify-end gap-2">
@@ -771,7 +771,7 @@ function renderTasksTab() {
                            <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
                          </select>
                          <input type="date" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
-                         <input type="time" id="edit-time-input" oninput="state.editTaskData.timeStr=this.value" value="${state.editTaskData.timeStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[100px]" />
+                         <button type="button" onclick="openCustomTimePicker('${state.editTaskData.timeStr}', 'setEditTaskTime')" class="bg-white border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[70px] text-center whitespace-nowrap overflow-hidden">${state.editTaskData.timeStr || '00:00'}</button>
                          <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" onchange="state.editTaskData.isSelfDeadline=this.checked" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
                       </div>
                       <div class="flex justify-end gap-2 mt-1">
@@ -1118,14 +1118,9 @@ function renderModal() {
                 <p class="text-[11px] text-slate-500 font-medium mt-0.5">授業のスケジュールをカレンダーで一括作成できます</p>
               </div>
             </div>
-            <div class="flex items-center gap-3">
-              <button onclick="saveAdderTasks()" class="text-sm bg-blue-600 text-white font-bold py-1.5 px-4 rounded-lg hover:bg-blue-700 transition shadow-sm flex items-center gap-1.5">
-                 保存
-              </button>
-              <button onclick="closeScheduleAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
-                <i data-lucide="x" class="w-5 h-5"></i>
-              </button>
-            </div>
+            <button onclick="closeScheduleAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
           </div>
           
           <div class="px-6 pb-4 pt-1 flex items-center justify-between border-t border-slate-100/50">
@@ -1162,7 +1157,8 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calDeliveryCheck', this.checked)" class="sr-only" ${adderConfig.calDeliveryCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">配信日</span>
                </label>
-               <input id="calDeliveryTimeInput" oninput="updateCalField('calDeliveryTime', this.value)" type="time" value="${adderConfig.calDeliveryTime}" class="bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calDeliveryTimeInput" type="hidden" value="${adderConfig.calDeliveryTime}" />
+               <button type="button" onclick="openCustomTimePicker('${adderConfig.calDeliveryTime}', 'setCalDeliveryTime')" class="bg-slate-50 border border-slate-300 rounded px-2 py-1.5 text-base ml-auto w-auto min-w-[100px] text-center ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}">${adderConfig.calDeliveryTime || '00:00'}</button>
              </div>
              
              <!-- Watch -->
@@ -1174,7 +1170,8 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calWatchCheck', this.checked)" class="sr-only" ${adderConfig.calWatchCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">視聴期限</span>
                </label>
-               <input id="calWatchTimeInput" oninput="updateCalField('calWatchTime', this.value)" type="time" value="${adderConfig.calWatchTime}" class="bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calWatchTimeInput" type="hidden" value="${adderConfig.calWatchTime}" />
+               <button type="button" onclick="openCustomTimePicker('${adderConfig.calWatchTime}', 'setCalWatchTime')" class="bg-amber-50 border border-amber-300 rounded px-2 py-1.5 text-base ml-auto w-auto min-w-[100px] text-center ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}">${adderConfig.calWatchTime || '00:00'}</button>
              </div>
              
              <!-- Assign -->
@@ -1186,7 +1183,8 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calAssignCheck', this.checked)" class="sr-only" ${adderConfig.calAssignCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">課題提出</span>
                </label>
-               <input id="calAssignTimeInput" oninput="updateCalField('calAssignTime', this.value)" type="time" value="${adderConfig.calAssignTime}" class="bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calAssignTimeInput" type="hidden" value="${adderConfig.calAssignTime}" />
+               <button type="button" onclick="openCustomTimePicker('${adderConfig.calAssignTime}', 'setCalAssignTime')" class="bg-red-50 border border-red-300 rounded px-2 py-1.5 text-base ml-auto w-auto min-w-[100px] text-center ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}">${adderConfig.calAssignTime || '00:00'}</button>
              </div>
            </div>
         </div>
@@ -1229,6 +1227,95 @@ function renderModal() {
      });
   }
 }
+
+// ------ TIME PICKER MODAL ------
+let tpConf = null;
+
+function openCustomTimePicker(initial, callbackFuncStr) {
+  let h = "00", m = "00";
+  if (initial && initial.includes(':')) {
+    const parts = initial.split(":");
+    h = parts[0] || "00";
+    m = parts[1] || "00";
+  }
+  tpConf = { h, m, callback: callbackFuncStr };
+  renderCustomTimePicker();
+}
+
+function closeCustomTimePicker() {
+  tpConf = null;
+  renderCustomTimePicker();
+}
+
+function saveCustomTimePicker() {
+  if (tpConf) {
+    const timeStr = `${String(tpConf.h).padStart(2, '0')}:${String(tpConf.m).padStart(2, '0')}`;
+    if (typeof window[tpConf.callback] === 'function') {
+      window[tpConf.callback](timeStr);
+    }
+  }
+  closeCustomTimePicker();
+}
+
+function renderCustomTimePicker() {
+  let root = document.getElementById('time-picker-modal-root');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'time-picker-modal-root';
+    document.body.appendChild(root);
+  }
+  if (!tpConf) {
+    root.innerHTML = '';
+    return;
+  }
+  
+  let hOpts = '';
+  for(let i=0; i<24; i++) {
+    let v = i.toString().padStart(2, '0');
+    hOpts += `<option value="${v}" ${tpConf.h === v ? 'selected' : ''}>${v}</option>`;
+  }
+  let mOpts = '';
+  for(let i=0; i<60; i++) {
+    let v = i.toString().padStart(2, '0');
+    mOpts += `<option value="${v}" ${tpConf.m === v ? 'selected' : ''}>${v}</option>`;
+  }
+
+  root.innerHTML = `
+    <div class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onclick="if(event.target===this) closeCustomTimePicker()">
+      <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-[280px] flex flex-col gap-6">
+        <h3 class="font-extrabold text-slate-800 text-lg flex items-center gap-2"><i data-lucide="clock" class="w-5 h-5 text-blue-600"></i>時刻を選択</h3>
+        
+        <div class="flex items-center justify-center gap-3 text-xl">
+           <div class="flex flex-col gap-1 items-center">
+             <label class="text-xs font-bold text-slate-500">時</label>
+             <select onchange="tpConf.h=this.value" class="border border-slate-300 rounded-xl px-4 py-2 bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 font-bold block appearance-none text-center text-lg min-w-[70px]">
+               ${hOpts}
+             </select>
+           </div>
+           <span class="font-black text-slate-400 mt-5">:</span>
+           <div class="flex flex-col gap-1 items-center">
+             <label class="text-xs font-bold text-slate-500">分</label>
+             <select onchange="tpConf.m=this.value" class="border border-slate-300 rounded-xl px-4 py-2 bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 font-bold block appearance-none text-center text-lg min-w-[70px]">
+               ${mOpts}
+             </select>
+           </div>
+        </div>
+
+        <div class="flex gap-2 mt-2">
+           <button onclick="closeCustomTimePicker()" class="flex-1 py-3 bg-slate-100 font-bold text-slate-700 rounded-xl hover:bg-slate-200 transition-colors text-sm">キャンセル</button>
+           <button onclick="saveCustomTimePicker()" class="flex-1 py-3 bg-blue-600 font-bold text-white rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-1.5 text-sm"><i data-lucide="check" class="w-4 h-4"></i>保存</button>
+        </div>
+      </div>
+    </div>
+  `;
+  if (window.lucide) lucide.createIcons();
+}
+
+function setCalDeliveryTime(v) { updateCalField('calDeliveryTime', v); }
+function setCalWatchTime(v) { updateCalField('calWatchTime', v); }
+function setCalAssignTime(v) { updateCalField('calAssignTime', v); }
+function setEditTaskTime(v) { state.editTaskData.timeStr=v; render(); }
+function setTaskModalTime(v) { taskModalData.timeStr=v; renderTaskModal(); }
 
 // End of logic
 
