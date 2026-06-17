@@ -15,11 +15,7 @@ let state = {
   editCourseDesc: '',
   editingLecture: null, // { courseId, oldName, newName }
   editingTaskId: null,
-  editTaskData: null,
-  gcalClientId: '',
-  gcalToken: null,
-  gcalOptions: [],
-  gcalTargetId: 'primary'
+  editTaskData: null
 };
 
 // Generate UUID-like short ID
@@ -28,6 +24,43 @@ function generateId() {
 }
 
 // Load from local storage
+function showToast(msg, type = 'info') {
+  const t = document.createElement('div');
+  const bg = type === 'error' ? 'bg-red-600' : 'bg-slate-800';
+  t.className = `fixed bottom-4 left-1/2 -translate-x-1/2 ${bg} text-white px-4 py-2 rounded-lg shadow-lg z-[9999] text-sm animate-in fade-in slide-in-from-bottom-4 transition-all`;
+  t.innerText = msg;
+  document.body.appendChild(t);
+  setTimeout(() => {
+    t.classList.add('opacity-0');
+    setTimeout(() => t.remove(), 300);
+  }, 3000);
+}
+
+function confirmAction(message, onConfirm) {
+  const root = document.createElement('div');
+  root.className = 'fixed inset-0 bg-slate-900/50 z-[9999] flex items-center justify-center p-4 animate-in fade-in';
+  root.innerHTML = `
+    <div class="bg-white rounded-xl shadow-xl max-w-sm w-full p-5 flex flex-col gap-4">
+       <div class="flex items-start gap-3 text-slate-800 font-medium text-sm leading-relaxed">
+         <i data-lucide="alert-triangle" class="w-5 h-5 text-red-500 shrink-0 mt-0.5"></i>
+         <p>${message}</p>
+       </div>
+       <div class="flex justify-end gap-2 mt-2">
+         <button id="btn-cancel" class="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">キャンセル</button>
+         <button id="btn-ok" class="px-4 py-2 text-sm font-bold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors shadow-sm">OK</button>
+       </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+  if (window.lucide) lucide.createIcons({root});
+  
+  root.querySelector('#btn-cancel').onclick = () => root.remove();
+  root.querySelector('#btn-ok').onclick = () => {
+     root.remove();
+     onConfirm();
+  };
+}
+
 let storageCrashed = false;
 
 function loadData() {
@@ -39,11 +72,10 @@ function loadData() {
       state.tasks = (parsed.tasks || []).map(t => ({
         ...t,
         lectureName: t.lectureName || '無題の講義',
-        isSelfDeadline: t.isSelfDeadline !== undefined ? t.isSelfDeadline : (t.deadlineType === 'self')
+        isSelfDeadline: t.isSelfDeadline !== undefined ? t.isSelfDeadline : (t.deadlineType === 'self'),
+        updatedAt: t.updatedAt || 0
       }));
-      if (parsed.gcalClientId) state.gcalClientId = parsed.gcalClientId;
-      if (parsed.gcalTargetId) state.gcalTargetId = parsed.gcalTargetId;
-      // We don't save the ephemeral token to bypass frequent expiration without refresh token
+      state.lastExportTime = parsed.lastExportTime || 0;
     }
   } catch(e) {
     console.error('Failed to access localStorage:', e);
@@ -56,8 +88,7 @@ function saveData() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       courses: state.courses,
       tasks: state.tasks,
-      gcalClientId: state.gcalClientId,
-      gcalTargetId: state.gcalTargetId
+      lastExportTime: state.lastExportTime || 0
     }));
     
   } catch (e) {
@@ -90,18 +121,19 @@ function addCourse() {
 }
 
 function deleteCourse(id) {
-  if (confirm('この科目を削除しますか？関連するタスクもすべて削除されます。')) {
+  confirmAction('この科目を削除しますか？関連するタスクもすべて削除されます。', () => {
     state.courses = state.courses.filter(c => c.id !== id);
     state.tasks = state.tasks.filter(t => t.courseId !== id);
     saveData();
     render();
-  }
+  });
 }
 
 function toggleTaskCompletion(id) {
   const task = state.tasks.find(t => t.id === id);
   if (task) {
     task.completed = !task.completed;
+    task.updatedAt = Date.now();
     saveData();
     render();
   }
@@ -113,17 +145,162 @@ function deleteTask(id) {
   render();
 }
 
+function generateICS(onlyModified = false) {
+  let icsLines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//UniCourse//JP',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:UniCourse 講義予定'
+  ];
+
+  let tasksToExport = state.tasks;
+  if (onlyModified) {
+    tasksToExport = tasksToExport.filter(t => !state.lastExportTime || (t.updatedAt && t.updatedAt > state.lastExportTime));
+  }
+
+  tasksToExport.forEach(task => {
+    const defaultCourseObj = state.courses.find(c => c.id === task.courseId);
+    const courseName = defaultCourseObj ? defaultCourseObj.name : '不明な科目';
+    const typeStr = { delivery: '配信', watch: '視聴', assignment: '課題' }[task.type] || task.type;
+    
+    const startDate = new Date(task.date);
+    
+    if (task.type === 'delivery') {
+      const startStr = formatDateBlock(startDate);
+      const nextDay = new Date(startDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const endStr = formatDateBlock(nextDay);
+      
+      const eventLines = createICSEvent({
+        uid: task.id + '-main@unicourse',
+        start: `VALUE=DATE:${startStr}`,
+        end: `VALUE=DATE:${endStr}`,
+        summary: `${courseName} - ${task.lectureName} [${typeStr}]`,
+        description: `タスク種類: ${typeStr}\\n講義名: ${task.lectureName}\\n科目: ${courseName}\\n\\n自動カレンダー同期`
+      });
+      icsLines = icsLines.concat(eventLines);
+    } else {
+      const start3h = new Date(startDate);
+      start3h.setHours(start3h.getHours() - 3);
+      
+      const startStr = formatDateTimeBlock(start3h);
+      
+      const eventLines = createICSTodo({
+        uid: task.id + '-main@unicourse',
+        start: startStr,
+        summary: `[締切3時間前] ${courseName} - ${task.lectureName} [${typeStr}]`,
+        description: ``
+      });
+      icsLines = icsLines.concat(eventLines);
+      
+      const remindStart = new Date(startDate);
+      remindStart.setHours(remindStart.getHours() - 24);
+      
+      const remStartStr = formatDateTimeBlock(remindStart);
+      
+      const reminderLines = createICSTodo({
+        uid: task.id + '-remind@unicourse',
+        start: remStartStr,
+        summary: `[締切24時間前] ${courseName} - ${task.lectureName} [${typeStr}]`,
+        description: ``
+      });
+      icsLines = icsLines.concat(reminderLines);
+    }
+  });
+
+  const backupData = JSON.stringify({ courses: state.courses, tasks: state.tasks });
+  const backupB64 = window.btoa(unescape(encodeURIComponent(backupData)));
+  const chunkedBackup = backupB64.match(/.{1,60}/g)?.join('\\n ') || '';
+
+  const backupLines = createICSEvent({
+    uid: 'backup@unicourse',
+    start: formatDateTimeBlock(new Date()),
+    end: formatDateTimeBlock(new Date()),
+    summary: 'UniCourse バックアップデータ（削除しないでください）',
+    description: `このイベントにはバックアップデータが含まれています。\\n[DATA_START]\\n ${chunkedBackup}\\n [DATA_END]`
+  });
+  
+  icsLines = icsLines.concat(backupLines);
+  icsLines.push('END:VCALENDAR');
+  
+  const foldLine = (line) => {
+    if (line.length <= 75) return line;
+    let folded = [];
+    let curr = line;
+    while (curr.length > 70) {
+      folded.push(curr.substring(0, 70));
+      curr = curr.substring(70);
+    }
+    folded.push(curr);
+    return folded.join('\\r\\n ');
+  };
+
+  return icsLines.map(foldLine).join('\\r\\n');
+}
+
+function formatDateBlock(date) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
+function formatDateTimeBlock(date) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  const h = String(date.getUTCHours()).padStart(2, '0');
+  const min = String(date.getUTCMinutes()).padStart(2, '0');
+  const s = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${y}${m}${d}T${h}${min}${s}Z`;
+}
+
+function createICSEvent({ uid, start, end, summary, description }) {
+  const dtstart = start.startsWith('VALUE=') ? `DTSTART;${start}` : `DTSTART:${start}`;
+  const dtend = end.startsWith('VALUE=') ? `DTEND;${end}` : `DTEND:${end}`;
+  const now = formatDateTimeBlock(new Date());
+  
+  return [
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${now}`,
+    dtstart,
+    dtend,
+    `SUMMARY:${summary}`,
+    `DESCRIPTION:${description}`,
+    'END:VEVENT'
+  ];
+}
+
+function createICSTodo({ uid, start, summary, description }) {
+  const dtstart = start.startsWith('VALUE=') ? `DUE;${start}` : `DUE:${start}`;
+  const now = formatDateTimeBlock(new Date());
+  
+  let lines = [
+    'BEGIN:VTODO',
+    `UID:${uid}`,
+    `DTSTAMP:${now}`,
+    dtstart,
+    `SUMMARY:${summary}`
+  ];
+  if (description) {
+    lines.push(`DESCRIPTION:${description}`);
+  }
+  lines.push('END:VTODO');
+  return lines;
+}
+
 function exportData() {
+  const onlyModified = document.getElementById('exportOnlyModified')?.checked || false;
   try {
-    const data = JSON.stringify({
-      courses: state.courses,
-      tasks: state.tasks
-    });
-    const blob = new Blob([data], { type: 'application/json' });
+    const icsContent = generateICS(onlyModified);
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = "ondemand_backup.json";
+    a.download = "unicourse_backup.ics";
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
@@ -131,41 +308,55 @@ function exportData() {
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     }, 100);
+    
+    state.lastExportTime = Date.now();
+    saveData();
   } catch (e) {
-    alert("エラーが発生しました: " + e.message + "\n\n代わりに「テキストでコピー」を使用してバックアップしてください。");
+    showToast("エラーが発生しました: " + e.message, "error");
   }
 }
 
 function copyData() {
-  const data = JSON.stringify({
-    courses: state.courses,
-    tasks: state.tasks
-  });
+  const onlyModified = document.getElementById('exportOnlyModified')?.checked || false;
+  const data = generateICS(onlyModified);
   if (navigator.clipboard) {
     navigator.clipboard.writeText(data).then(() => {
-      alert("データをクリップボードにコピーしました。テキストファイル等に貼り付けて保存してください。");
+      showToast("データをクリップボードにコピーしました。");
+      state.lastExportTime = Date.now();
+      saveData();
     }).catch(() => {
-      prompt("以下のテキストをコピーして保存してください:", data);
+      showToast("クリップボードのコピーに失敗しました。ファイル保存をご利用ください。", "error");
     });
   } else {
-    prompt("以下のテキストをコピーして保存してください:", data);
+    showToast("ご使用の環境ではクリップボードを使用できません。", "error");
   }
 }
 
-function importData(jsonString) {
+function importData(dataString) {
   try {
-    const parsed = JSON.parse(jsonString);
-    if (parsed.courses && parsed.tasks) {
+    let parsed = null;
+    if (dataString.trim().startsWith('{')) {
+      parsed = JSON.parse(dataString);
+    } else {
+      const match = dataString.match(/\[DATA_START\]([\\s\\S]*?)\[DATA_END\]/);
+      if (match) {
+        const b64 = match[1].replace(/\\s\\\\n/g, '').replace(/\\s/g, '').replace(/\\\\n/g, '');
+        const jsonString = decodeURIComponent(escape(window.atob(b64)));
+        parsed = JSON.parse(jsonString);
+      }
+    }
+    
+    if (parsed && parsed.courses && parsed.tasks) {
       state.courses = parsed.courses;
       state.tasks = parsed.tasks;
       saveData();
       render();
-      alert("データのインポートに成功しました");
+      showToast("データのインポートに成功しました");
     } else {
-      alert("無効なデータ形式です");
+      showToast("無効なデータ形式です。正しいバックアップファイル（.json または .ics）を選択してください。", "error");
     }
   } catch(e) {
-    alert("データの読み込みに失敗しました");
+    showToast("データの読み込みに失敗しました。ファイルが破損している可能性があります。", "error");
   }
 }
 
@@ -244,6 +435,7 @@ function startEditTask(taskId) {
 
   state.editingTaskId = taskId;
   state.editTaskData = {
+    courseId: t.courseId,
     lectureName: t.lectureName,
     type: t.type,
     dateStr: dateStr,
@@ -256,10 +448,12 @@ function startEditTask(taskId) {
 function saveEditTask() {
   const t = state.tasks.find(x => x.id === state.editingTaskId);
   if (t && state.editTaskData) {
+    t.courseId = state.editTaskData.courseId;
     t.lectureName = state.editTaskData.lectureName.trim() || '無題の講義';
     t.type = state.editTaskData.type;
     t.date = `${state.editTaskData.dateStr}T${state.editTaskData.timeStr || '00:00'}:00`;
     t.isSelfDeadline = state.editTaskData.isSelfDeadline;
+    t.updatedAt = Date.now();
     saveData();
   }
   state.editingTaskId = null;
@@ -321,8 +515,8 @@ function renderNav() {
 
   desktopNav.innerHTML = `
     <div class="px-6 pb-6 text-white text-lg font-bold flex items-center gap-2 border-b border-slate-800">
-      <i data-lucide="book-open" class="w-6 h-6 text-blue-400"></i>
-      <span class="leading-tight">オンデマンド<br/>受講管理</span>
+      <i data-lucide="book-open" class="w-6 h-6 text-blue-400 shrink-0"></i>
+      <span class="leading-tight">オンデマンド受講管理<br/><span class="text-xs text-slate-400 font-normal tracking-wider uppercase">UniCourse</span></span>
     </div>
     <div class="flex-1 py-4 flex flex-col gap-2 px-4">
       ${tabs.map(t => {
@@ -438,6 +632,9 @@ function renderTasksTab() {
                     return `
                     <div class="flex flex-col gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg -ml-1.5 transition-colors my-1">
                       <div class="flex flex-wrap gap-2 items-center">
+                         <select onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white max-w-[120px]">
+                           ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
+                         </select>
                          <input type="text" value="${state.editTaskData.lectureName}" oninput="state.editTaskData.lectureName=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs w-28 outline-none" placeholder="講義名" />
                          <select onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white">
                            <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
@@ -545,6 +742,9 @@ function renderTasksTab() {
                     return `
                     <div class="flex flex-col gap-2 p-3 bg-blue-50 border border-blue-100 transition-colors">
                       <div class="flex flex-wrap gap-2 items-center">
+                         <select onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white max-w-[120px]">
+                           ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
+                         </select>
                          <input type="text" value="${state.editTaskData.lectureName}" oninput="state.editTaskData.lectureName=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs w-28 outline-none" placeholder="講義名" />
                          <select onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white">
                            <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
@@ -723,86 +923,45 @@ function renderSettingsTab() {
   return `
     <div class="flex flex-col gap-4 animate-in fade-in">
       <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-        <i data-lucide="settings" class="w-5 h-5"></i> 設定・その他
+        <i data-lucide="settings" class="w-5 h-5"></i> 設定・使い方ガイド
       </h2>
       
+      <div class="bg-indigo-50 border border-indigo-100 p-5 rounded-xl shadow-sm">
+        <h3 class="font-bold text-indigo-800 text-sm mb-2 flex items-center gap-2">
+           <i data-lucide="info" class="w-4 h-4"></i> 基本的な使い方
+        </h3>
+        <ol class="list-decimal list-inside text-sm text-indigo-900 leading-relaxed space-y-2 mb-2">
+          <li><strong>科目を登録する：</strong>「科目管理」タブから授業を追加し、「スケジュールを追加」から日程を一括登録します。</li>
+          <li><strong>タスクの管理：</strong>「タスク」タブで、配信日・視聴期限・課題提出の予定を確認し、完了したものはチェックをつけます。</li>
+          <li><strong>カレンダーへ同期する：</strong>このアプリ自体には通知機能がありません。予定の通知を受け取るために、下のボタンから「カレンダー保存 (.ics)」を行い、お使いのスマホの Google Calendar や Apple カレンダー等にインポートしてください。</li>
+        </ol>
+      </div>
+
       <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-4">
         <div>
-          <h3 class="font-bold text-slate-700 text-sm mb-2 mt-2 flex items-center gap-2">
-             <i data-lucide="calendar" class="w-4 h-4 text-green-600"></i> Googleカレンダー自動登録
-          </h3>
-          <p class="text-xs text-slate-500 mb-4 leading-relaxed">
-             Google Calendar APIを使用して、スケジュールを直接カレンダーに登録します。<br/>
-             連携には <a href="https://console.cloud.google.com/" target="_blank" class="text-blue-600 underline">Google Cloud Console</a> で取得したOAuth 2.0 クライアントIDが必要です。
-          </p>
-          <div class="flex flex-col gap-3 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-100">
-             <div>
-                <label class="text-xs font-bold text-slate-600 mb-1 block">Google OAuth クライアントID</label>
-                <input type="text" id="gcal_client_id" value="${state.gcalClientId || ''}" onchange="state.gcalClientId=this.value; saveData();" placeholder="例: xxx.apps.googleusercontent.com" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-             </div>
-             
-             ${state.gcalToken ? `
-               <div class="flex items-center gap-2 text-xs mt-2 p-2 bg-green-50 border border-green-200 rounded-lg">
-                  <i data-lucide="check-circle-2" class="w-4 h-4 text-green-600"></i>
-                  <span class="text-green-700 font-bold">Googleカレンダー連携済み</span>
-                  <button onclick="gcalLogout()" class="ml-auto text-slate-500 hover:text-red-600 transition-colors bg-white px-2 py-1 rounded border border-slate-200">連携解除</button>
-               </div>
-               
-               <div class="mt-2">
-                  <label class="text-xs font-bold text-slate-600 mb-1 block">登録先カレンダー</label>
-                  <select id="gcal_target_id" onchange="state.gcalTargetId=this.value; saveData();" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                     <option value="primary">メインカレンダー (デフォルト)</option>
-                     ${state.gcalOptions ? state.gcalOptions.map(opt => `<option value="${opt.id}" ${state.gcalTargetId === opt.id ? 'selected' : ''}>${opt.summary}</option>`).join('') : ''}
-                  </select>
-               </div>
-               
-               <button onclick="exportToGoogleCalendar()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm w-full mt-2">
-                  <i data-lucide="cloud-upload" class="w-4 h-4"></i> 未完了タスクをGoogleカレンダーに登録
-               </button>
-             ` : `
-               <button onclick="gcalLogin()" class="mt-2 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-2.5 px-4 rounded-lg shadow-sm text-sm flex items-center justify-center gap-2 transition-colors">
-                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-5 h-5"> Google アカウントでログイン
-               </button>
-             `}
-          </div>
-
-          <h3 class="font-bold text-slate-700 text-sm mb-2 flex items-center gap-2 border-t border-slate-100 pt-6">
-             <i data-lucide="calendar" class="w-4 h-4 text-blue-600"></i> 手動カレンダーエクスポート (.ics)
-          </h3>
-          <p class="text-xs text-slate-500 mb-3 leading-relaxed">
-             すべてのタスクをカレンダーファイル(ICS)としてダウンロードします。
-          </p>
-          <div class="flex flex-wrap gap-2 mb-2">
-            <button onclick="generateICSAndDownloadAll()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
-              <i data-lucide="download" class="w-4 h-4"></i> カレンダーファイルを出力
-            </button>
-          </div>
-        </div>
-
-        <hr class="border-slate-100" />
-
-        <div>
           <h3 class="font-bold text-slate-700 text-sm mb-2 flex items-center gap-2">
-             <i data-lucide="alert-circle" class="w-4 h-4"></i> データ管理
+             <i data-lucide="calendar" class="w-4 h-4"></i> カレンダー連携 / データ管理
           </h3>
           <div class="text-sm text-slate-600 mb-3 leading-relaxed">
-             データはログイン不要でブラウザに自動保存されます。機種変更の際などはデータをエクスポートして新しい端末でインポートしてください。<br/>
-             <span class="text-xs text-slate-400">※プレビュー環境でエクスポートボタンが機能しない場合は、アプリを「新しいタブで開く」か右上のメニューから開いてからお試しください。</span>
+             予定をGoogleカレンダー等に取り組むためのファイルを出力します。バックアップデータも含まれるため、機種変更時の復元にも使えます。<br/>
+             <span class="text-xs text-slate-400">※ボタンが機能しない場合は、アプリを「新しいタブで開く」からお試しください。</span>
           </div>
-           <div class="flex flex-wrap gap-2">
-            <button onclick="exportData()" class="flex-1 min-w-[120px] bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              <i data-lucide="download" class="w-4 h-4"></i> ファイル保存
-            </button>
-            <button onclick="copyData()" class="flex-1 min-w-[120px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 border border-slate-200">
-              <i data-lucide="copy" class="w-4 h-4"></i> テキストでコピー
-            </button>
-            <label class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer">
-              <i data-lucide="upload" class="w-4 h-4"></i> インポート
-              <input type="file" accept=".json" class="hidden" onchange="handleImport(event)" />
+
+          <div class="mb-4">
+            <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer p-2 bg-slate-50 rounded border border-slate-200">
+              <input type="checkbox" id="exportOnlyModified" class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500">
+              <span>前回エクスポート時から<strong>追加・変更された予定のみ出力</strong>する</span>
             </label>
           </div>
-          <div class="mt-2 text-center w-full">
-            <button onclick="importFromClipboard()" class="text-xs text-blue-600 hover:underline font-bold py-1">クリップボードからインポート</button>
+
+           <div class="flex flex-wrap gap-2">
+            <button onclick="exportData()" class="flex-1 min-w-[120px] bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+              <i data-lucide="download" class="w-4 h-4"></i> icsファイルをエクスポート
+            </button>
+            <label class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer">
+              <i data-lucide="upload" class="w-4 h-4"></i> icsファイルをインポート
+              <input type="file" accept=".json,.ics" class="hidden" onchange="handleImport(event)" />
+            </label>
           </div>
         </div>
       </div>
@@ -821,169 +980,6 @@ function handleImport(e) {
   e.target.value = '';
 }
 
-let clipboardModalOpen = false;
-
-function openClipboardModal() {
-  clipboardModalOpen = true;
-  renderClipboardModal();
-}
-
-function closeClipboardModal() {
-  clipboardModalOpen = false;
-  renderClipboardModal();
-}
-
-function handleClipboardImport(e) {
-  e.preventDefault();
-  const text = document.getElementById('clipboard-import-text').value;
-  if (!text) return;
-  importData(text);
-  closeClipboardModal();
-}
-
-function generateICSAndDownloadAll() {
-  const events = [];
-  
-  state.tasks.forEach(task => {
-    if (task.completed) return;
-    const course = state.courses.find(c => c.id === task.courseId);
-    if (!course) return;
-    
-    const cname = course.name;
-    const tlabel = typeLabels[task.type] || 'タスク';
-    
-    const d = new Date(task.date);
-    const isAllDay = task.type === 'delivery'; // 配信日はすべて終日予定として扱う
-    
-    const pad = n => n.toString().padStart(2, '0');
-    
-    const summary = `${cname} - ${task.lectureName} [${tlabel}]`;
-    const description = `タスク種類: ${tlabel}\\n講義名: ${task.lectureName}\\n科目: ${cname}\\n自動カレンダー同期`;
-    const stamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-    
-    if (isAllDay) {
-       const dtstart = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
-       const nextDay = new Date(d);
-       nextDay.setDate(d.getDate() + 1);
-       const dtend = `${nextDay.getFullYear()}${pad(nextDay.getMonth()+1)}${pad(nextDay.getDate())}`;
-       
-       events.push(`BEGIN:VEVENT
-UID:${task.id}@ondemand-app
-DTSTAMP:${stamp}
-DTSTART;VALUE=DATE:${dtstart}
-DTEND;VALUE=DATE:${dtend}
-SUMMARY:${summary}
-DESCRIPTION:${description}
-END:VEVENT`);
-    } else {
-       const utc = new Date(d.getTime() + d.getTimezoneOffset() * 60000);
-       const dtString = utc.getFullYear() + pad(utc.getMonth()+1) + pad(utc.getDate()) + 'T' + pad(utc.getHours()) + pad(utc.getMinutes()) + pad(utc.getSeconds()) + 'Z';
-       
-       const endDate = new Date(utc.getTime() + 60*60*1000);
-       const dtend = endDate.getFullYear() + pad(endDate.getMonth()+1) + pad(endDate.getDate()) + 'T' + pad(endDate.getHours()) + pad(endDate.getMinutes()) + pad(endDate.getSeconds()) + 'Z';
-       
-       events.push(`BEGIN:VTODO
-UID:${task.id}@ondemand-app
-DTSTAMP:${stamp}
-DUE:${dtString}
-SUMMARY:${summary}
-DESCRIPTION:${description}
-STATUS:NEEDS-ACTION
-END:VTODO`);
-
-       // 24時間前のリマインド用タスク
-       const reminderUtc = new Date(utc.getTime() - 24*60*60*1000);
-       
-       const rStart = reminderUtc.getFullYear() + pad(reminderUtc.getMonth()+1) + pad(reminderUtc.getDate()) + 'T' + pad(reminderUtc.getHours()) + pad(reminderUtc.getMinutes()) + pad(reminderUtc.getSeconds()) + 'Z';
-       
-       events.push(`BEGIN:VTODO
-UID:${task.id}-rem1@ondemand-app
-DTSTAMP:${stamp}
-DUE:${rStart}
-SUMMARY:[確実なリマインド] ${summary}
-DESCRIPTION:${description}
-STATUS:NEEDS-ACTION
-END:VTODO`);
-    }
-  });
-  
-  if (events.length === 0) {
-    alert("カレンダーに出力できる未完了タスクがありません。");
-    return;
-  }
-  
-  const icsStr = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//OnDemandApp//Calendar Export//JA
-CALSCALE:GREGORIAN
-${events.join('\n')}
-END:VCALENDAR`;
-
-  const blob = new Blob([icsStr], { type: 'text/calendar;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = window.URL.createObjectURL(blob);
-  a.download = "ondemand_schedule.ics";
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    document.body.removeChild(a);
-  }, 100);
-}
-
-function renderClipboardModal() {
-  const root = document.getElementById('modal-root');
-  if (!clipboardModalOpen) {
-    if (root.innerHTML.includes('テキストからインポート')) {
-      root.innerHTML = '';
-    }
-    return;
-  }
-  
-  root.innerHTML = `
-    <div class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closeClipboardModal()">
-      <div class="bg-white rounded-2xl w-full max-w-md shadow-xl flex flex-col max-h-[90vh]">
-        <div class="p-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 class="font-bold text-slate-800">テキストからインポート</h2>
-          <button onclick="closeClipboardModal()" class="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
-        </div>
-        <form onsubmit="handleClipboardImport(event)" class="p-4 flex flex-col gap-4 overflow-y-auto">
-          <p class="text-sm text-slate-600">エクスポート等でコピーしてある文字データを、下の枠内に貼り付けて「インポートを確定」を押してください。</p>
-          <textarea id="clipboard-import-text" class="w-full border border-slate-300 rounded-lg p-3 min-h-[150px] outline-none text-sm text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-slate-400" placeholder='{"courses": [...], "tasks": [...]}'></textarea>
-          <div class="flex gap-2">
-            <button type="button" onclick="closeClipboardModal()" class="flex-1 px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors">キャンセル</button>
-            <button type="submit" class="flex-1 px-4 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors">インポートを確定</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `;
-  if (window.lucide) lucide.createIcons();
-}
-
-function importFromClipboard() {
-  if (navigator.clipboard && navigator.clipboard.readText) {
-    navigator.clipboard.readText().then(text => {
-      // If we got text easily without prompt, and it looks like JSON
-      if (text && text.trim().startsWith('{')) {
-        openClipboardModal();
-        setTimeout(() => {
-          const ta = document.getElementById('clipboard-import-text');
-          if (ta) ta.value = text;
-        }, 50);
-      } else {
-        openClipboardModal();
-      }
-    }).catch(() => {
-      openClipboardModal();
-    });
-  } else {
-    openClipboardModal();
-  }
-}
-
-
-// End of Clipboard logic
 
 // ------ SCHEDULE ADDER MODAL ------
 let adderConfig = null;
@@ -1002,7 +998,6 @@ function openScheduleAdder(courseId) {
   adderConfig = {
     courseId,
     startNum: 1, // Start strictly from 1 as requested
-    add_mode: 'calendar', // 'calendar' or 'rows'
     calendarDates: [],
     calDeliveryCheck: false,
     calDeliveryTime: '00:00',
@@ -1010,9 +1005,6 @@ function openScheduleAdder(courseId) {
     calWatchTime: '23:59',
     calAssignCheck: false,
     calAssignTime: '23:59',
-    rows: [
-      { id: generateId(), deliveryDate: '', deliveryTime: '', watchDate: '', watchTime: '23:59', assignDate: '', assignTime: '23:59' }
-    ],
     isSelfDeadline: false
   };
   
@@ -1021,26 +1013,6 @@ function openScheduleAdder(courseId) {
 
 function closeScheduleAdder() {
   adderConfig = null;
-  renderModal();
-}
-
-function addAdderRow() {
-  adderConfig.rows.push({ id: generateId(), deliveryDate: '', deliveryTime: '', watchDate: '', watchTime: '23:59', assignDate: '', assignTime: '23:59' });
-  renderModal();
-}
-
-function removeAdderRow(id) {
-  adderConfig.rows = adderConfig.rows.filter(r => r.id !== id);
-  renderModal();
-}
-
-function updateRow(id, field, value) {
-  const r = adderConfig.rows.find(r => r.id === id);
-  if (r) r[field] = value;
-}
-
-function switchAdderMode(mode) {
-  adderConfig.add_mode = mode;
   renderModal();
 }
 
@@ -1053,67 +1025,48 @@ function updateCalField(field, value) {
 function saveAdderTasks() {
   const newTasks = [];
   
-  if (adderConfig.add_mode === 'rows') {
-    adderConfig.rows.forEach((r, idx) => {
-      const lectureName = `第${adderConfig.startNum + idx}回`;
-      if (r.deliveryDate) {
-        newTasks.push({
-          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'delivery', 
-          date: `${r.deliveryDate}T${r.deliveryTime || '00:00'}:00`, isSelfDeadline: false, completed: false
-        });
-      }
-      if (r.watchDate) {
-        newTasks.push({
-          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'watch', 
-          date: `${r.watchDate}T${r.watchTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
-        });
-      }
-      if (r.assignDate) {
-        newTasks.push({
-          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'assignment', 
-          date: `${r.assignDate}T${r.assignTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
-        });
-      }
-    });
-  } else {
-    // Calendar mode
-    if (adderConfig.calendarDates.length === 0) {
-      alert("カレンダーで日付を1つ以上選択してください");
-      return;
-    }
-    
-    // Sort dates chronologically
-    const sortedDates = [...adderConfig.calendarDates].sort((a,b) => new Date(a) - new Date(b));
-    
-    sortedDates.forEach((dateStr, idx) => {
-      const lectureName = `第${adderConfig.startNum + idx}回`;
-      if (adderConfig.calDeliveryCheck) {
-        newTasks.push({
-          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'delivery', 
-          date: `${dateStr}T${adderConfig.calDeliveryTime || '00:00'}:00`, isSelfDeadline: false, completed: false
-        });
-      }
-      if (adderConfig.calWatchCheck) {
-        newTasks.push({
-          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'watch', 
-          date: `${dateStr}T${adderConfig.calWatchTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
-        });
-      }
-      if (adderConfig.calAssignCheck) {
-        newTasks.push({
-          id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'assignment', 
-          date: `${dateStr}T${adderConfig.calAssignTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false
-        });
-      }
-    });
-  }
-
-  if (newTasks.length === 0 && adderConfig.add_mode === 'rows') {
-    alert("日付を1つ以上設定してください");
+  // Grab direct values to guarantee we save user input properly
+  const delTimeInput = document.getElementById('calDeliveryTimeInput');
+  if (delTimeInput) adderConfig.calDeliveryTime = delTimeInput.value;
+  
+  const watchTimeInput = document.getElementById('calWatchTimeInput');
+  if (watchTimeInput) adderConfig.calWatchTime = watchTimeInput.value;
+  
+  const assignTimeInput = document.getElementById('calAssignTimeInput');
+  if (assignTimeInput) adderConfig.calAssignTime = assignTimeInput.value;
+  
+  if (adderConfig.calendarDates.length === 0) {
+    showToast("カレンダーで日付を1つ以上選択してください", "error");
     return;
   }
-  if (newTasks.length === 0 && adderConfig.add_mode === 'calendar') {
-     alert("作成するタスクの種類（視聴期限など）を選択してください");
+  
+  // Sort dates chronologically
+  const sortedDates = [...adderConfig.calendarDates].sort((a,b) => new Date(a) - new Date(b));
+  
+  sortedDates.forEach((dateStr, idx) => {
+    const lectureName = `第${adderConfig.startNum + idx}回`;
+    if (adderConfig.calDeliveryCheck) {
+      newTasks.push({
+        id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'delivery', 
+        date: `${dateStr}T${adderConfig.calDeliveryTime || '00:00'}:00`, isSelfDeadline: false, completed: false, updatedAt: Date.now()
+      });
+    }
+    if (adderConfig.calWatchCheck) {
+      newTasks.push({
+        id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'watch', 
+        date: `${dateStr}T${adderConfig.calWatchTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false, updatedAt: Date.now()
+      });
+    }
+    if (adderConfig.calAssignCheck) {
+      newTasks.push({
+        id: generateId(), courseId: adderConfig.courseId, lectureName, type: 'assignment', 
+        date: `${dateStr}T${adderConfig.calAssignTime || '23:59'}:00`, isSelfDeadline: adderConfig.isSelfDeadline, completed: false, updatedAt: Date.now()
+      });
+    }
+  });
+
+  if (newTasks.length === 0) {
+     showToast("作成するタスクの種類（視聴期限など）を選択してください", "error");
      return;
   }
 
@@ -1121,6 +1074,7 @@ function saveAdderTasks() {
   saveData();
   closeScheduleAdder();
   render();
+  showToast("スケジュールを保存しました");
 }
 
 function renderModal() {
@@ -1128,104 +1082,6 @@ function renderModal() {
   if (!adderConfig) {
     root.innerHTML = '';
     return;
-  }
-
-  let contentHtml = '';
-
-  if (adderConfig.add_mode === 'rows') {
-    const rowsHtml = adderConfig.rows.map((row, idx) => `
-      <div class="bg-white border text-sm border-slate-200 rounded-xl p-4 flex flex-col gap-3 relative overflow-hidden">
-        <div class="absolute top-0 right-0 bg-slate-100 text-slate-500 font-bold px-3 py-1 rounded-bl-xl text-xs">
-          第${adderConfig.startNum + idx}回
-        </div>
-        ${idx > 0 ? `
-          <button onclick="removeAdderRow('${row.id}')" class="absolute top-2 right-14 text-slate-400 hover:text-red-500">
-            <i data-lucide="trash-2" class="w-4 h-4"></i>
-          </button>
-        ` : ''}
-        <div class="grid grid-cols-[1fr_1fr] md:grid-cols-3 gap-3 w-full mt-4 md:mt-2">
-          <div class="flex flex-col gap-1 border-b md:border-b-0 md:border-r border-slate-100 pb-2 md:pb-0 md:pr-3">
-            <label class="text-xs font-bold text-slate-600">配信日</label>
-            <input type="date" value="${row.deliveryDate}" onchange="updateRow('${row.id}', 'deliveryDate', this.value)" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs" />
-            <input type="time" value="${row.deliveryTime}" onchange="updateRow('${row.id}', 'deliveryTime', this.value)" class="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs" />
-          </div>
-          <div class="flex flex-col gap-1 border-b md:border-b-0 md:border-r border-slate-100 pb-2 md:pb-0 md:px-3">
-            <label class="text-xs font-bold text-slate-600">視聴期限</label>
-            <input type="date" value="${row.watchDate}" onchange="updateRow('${row.id}', 'watchDate', this.value)" class="w-full bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs" />
-            <input type="time" value="${row.watchTime}" onchange="updateRow('${row.id}', 'watchTime', this.value)" class="w-full bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs" />
-          </div>
-          <div class="flex flex-col gap-1 md:pl-3 col-span-2 md:col-span-1">
-            <label class="text-xs font-bold text-slate-600">課題提出</label>
-            <input type="date" value="${row.assignDate}" onchange="updateRow('${row.id}', 'assignDate', this.value)" class="w-full bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs" />
-            <input type="time" value="${row.assignTime}" onchange="updateRow('${row.id}', 'assignTime', this.value)" class="w-full bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs" />
-          </div>
-        </div>
-      </div>
-    `).join('');
-    
-    contentHtml = `
-      <div class="p-6 overflow-y-auto bg-slate-50/30 flex flex-col gap-3">
-         ${rowsHtml}
-         <button onclick="addAdderRow()" class="mt-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 border border-dashed border-slate-300 rounded-xl py-3 flex items-center justify-center gap-2 text-sm font-bold transition-colors">
-            <i data-lucide="plus" class="w-4 h-4"></i> 次の講義を追加
-         </button>
-      </div>
-    `;
-  } else {
-    // Calendar mode HTML
-    contentHtml = `
-      <div class="flex flex-col md:flex-row p-6 overflow-y-auto bg-slate-50/30 gap-6">
-        <div class="flex flex-col gap-2 relative z-10 w-full md:w-auto">
-          <p class="text-sm font-bold text-slate-700 flex items-center gap-1.5"><i data-lucide="calendar" class="w-4 h-4"></i> 日付を複数選択</p>
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-2 flatpickr-wrapper">
-             <input type="text" id="multi-calendar" class="hidden" />
-          </div>
-          <p class="text-[11px] text-slate-500 mt-1">※選択した順番に関わらず、日付順に第${adderConfig.startNum}回〜が割り当てられます。</p>
-        </div>
-        
-        <div class="flex-1 flex flex-col gap-4">
-           <p class="text-sm font-bold text-slate-700 mt-2 md:mt-0 flex items-center gap-1.5"><i data-lucide="settings-2" class="w-4 h-4"></i> 一括設定 (選択した全日に適用)</p>
-           
-           <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col gap-4">
-             <!-- Delivery -->
-             <div class="flex items-center gap-3">
-               <label class="flex items-center gap-2 cursor-pointer group">
-                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calDeliveryCheck ? 'bg-blue-600 border-blue-600' : 'bg-white border-slate-300 group-hover:border-blue-400'}">
-                    ${adderConfig.calDeliveryCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
-                  </div>
-                  <input type="checkbox" onchange="updateCalField('calDeliveryCheck', this.checked)" class="sr-only" ${adderConfig.calDeliveryCheck ? 'checked' : ''} />
-                  <span class="text-xs font-bold text-slate-600 select-none">配信日</span>
-               </label>
-               <input type="time" value="${adderConfig.calDeliveryTime}" onchange="updateCalField('calDeliveryTime', this.value)" class="bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}" />
-             </div>
-             
-             <!-- Watch -->
-             <div class="flex items-center gap-3">
-               <label class="flex items-center gap-2 cursor-pointer group">
-                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calWatchCheck ? 'bg-amber-500 border-amber-500' : 'bg-white border-slate-300 group-hover:border-amber-400'}">
-                    ${adderConfig.calWatchCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
-                  </div>
-                  <input type="checkbox" onchange="updateCalField('calWatchCheck', this.checked)" class="sr-only" ${adderConfig.calWatchCheck ? 'checked' : ''} />
-                  <span class="text-xs font-bold text-slate-600 select-none">視聴期限</span>
-               </label>
-               <input type="time" value="${adderConfig.calWatchTime}" onchange="updateCalField('calWatchTime', this.value)" class="bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}" />
-             </div>
-             
-             <!-- Assign -->
-             <div class="flex items-center gap-3">
-               <label class="flex items-center gap-2 cursor-pointer group">
-                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calAssignCheck ? 'bg-red-500 border-red-500' : 'bg-white border-slate-300 group-hover:border-red-400'}">
-                    ${adderConfig.calAssignCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
-                  </div>
-                  <input type="checkbox" onchange="updateCalField('calAssignCheck', this.checked)" class="sr-only" ${adderConfig.calAssignCheck ? 'checked' : ''} />
-                  <span class="text-xs font-bold text-slate-600 select-none">課題提出</span>
-               </label>
-               <input type="time" value="${adderConfig.calAssignTime}" onchange="updateCalField('calAssignTime', this.value)" class="bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}" />
-             </div>
-           </div>
-        </div>
-      </div>
-    `;
   }
 
   root.innerHTML = `
@@ -1240,7 +1096,7 @@ function renderModal() {
               </div>
               <div class="flex flex-col">
                 <h4 class="font-extrabold text-slate-800 text-lg tracking-tight">スケジュール追加</h4>
-                <p class="text-[11px] text-slate-500 font-medium mt-0.5">授業のスケジュールを一括設定または個別に設定できます</p>
+                <p class="text-[11px] text-slate-500 font-medium mt-0.5">授業のスケジュールをカレンダーで一括作成できます</p>
               </div>
             </div>
             <button onclick="closeScheduleAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
@@ -1248,7 +1104,7 @@ function renderModal() {
             </button>
           </div>
           
-          <div class="px-6 pb-3 pt-1 flex items-center justify-between border-t border-slate-100/50">
+          <div class="px-6 pb-4 pt-1 flex items-center justify-between border-t border-slate-100/50">
             <div class="flex items-center gap-2">
                <span class="text-xs font-bold text-slate-600">開始ナンバー:</span>
                <div class="flex items-center text-sm font-bold bg-white border border-slate-200 rounded text-slate-600 overflow-hidden focus-within:border-blue-500">
@@ -1258,18 +1114,59 @@ function renderModal() {
                </div>
             </div>
           </div>
-
-          <div class="px-6 flex gap-2 w-full border-t border-slate-200 bg-white pt-2">
-            <button onclick="switchAdderMode('calendar')" class="pb-3 px-2 border-b-2 transition-colors text-sm font-bold flex items-center gap-1.5 ${adderConfig.add_mode === 'calendar' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">
-               <i data-lucide="calendar-plus" class="w-4 h-4"></i> カレンダーで一括作成
-            </button>
-            <button onclick="switchAdderMode('rows')" class="pb-3 px-2 border-b-2 transition-colors text-sm font-bold flex items-center gap-1.5 ${adderConfig.add_mode === 'rows' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}">
-               <i data-lucide="list-plus" class="w-4 h-4"></i> 個別に行を追加
-            </button>
-          </div>
         </div>
 
-        ${contentHtml}
+      <div class="flex flex-col md:flex-row p-6 overflow-y-auto bg-slate-50/30 gap-6">
+        <div class="flex flex-col gap-2 relative z-10 w-full md:w-auto">
+          <p class="text-sm font-bold text-slate-700 flex items-center gap-1.5"><i data-lucide="calendar" class="w-4 h-4"></i> 日付を複数選択</p>
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-2 flatpickr-wrapper w-full max-w-[310px]">
+             <input type="text" id="multi-calendar" class="hidden" />
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1 pl-1">※選択した順番に関わらず、日付順に第${adderConfig.startNum}回〜が割り当てられます。</p>
+        </div>
+        
+        <div class="flex-1 flex flex-col gap-4">
+           <p class="text-sm font-bold text-slate-700 mt-2 md:mt-0 flex items-center gap-1.5"><i data-lucide="settings-2" class="w-4 h-4"></i> 設定 (選択した全日に適用)</p>
+           
+           <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col gap-4">
+             <!-- Delivery -->
+             <div class="flex items-center gap-3">
+               <label class="flex items-center gap-2 cursor-pointer group">
+                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calDeliveryCheck ? 'bg-blue-600 border-blue-600' : 'bg-white border-slate-300 group-hover:border-blue-400'}">
+                    ${adderConfig.calDeliveryCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
+                  </div>
+                  <input type="checkbox" onchange="updateCalField('calDeliveryCheck', this.checked)" class="sr-only" ${adderConfig.calDeliveryCheck ? 'checked' : ''} />
+                  <span class="text-xs font-bold text-slate-600 select-none">配信日</span>
+               </label>
+               <input id="calDeliveryTimeInput" type="time" value="${adderConfig.calDeliveryTime}" class="bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}" />
+             </div>
+             
+             <!-- Watch -->
+             <div class="flex items-center gap-3">
+               <label class="flex items-center gap-2 cursor-pointer group">
+                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calWatchCheck ? 'bg-amber-500 border-amber-500' : 'bg-white border-slate-300 group-hover:border-amber-400'}">
+                    ${adderConfig.calWatchCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
+                  </div>
+                  <input type="checkbox" onchange="updateCalField('calWatchCheck', this.checked)" class="sr-only" ${adderConfig.calWatchCheck ? 'checked' : ''} />
+                  <span class="text-xs font-bold text-slate-600 select-none">視聴期限</span>
+               </label>
+               <input id="calWatchTimeInput" type="time" value="${adderConfig.calWatchTime}" class="bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}" />
+             </div>
+             
+             <!-- Assign -->
+             <div class="flex items-center gap-3">
+               <label class="flex items-center gap-2 cursor-pointer group">
+                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calAssignCheck ? 'bg-red-500 border-red-500' : 'bg-white border-slate-300 group-hover:border-red-400'}">
+                    ${adderConfig.calAssignCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ''}
+                  </div>
+                  <input type="checkbox" onchange="updateCalField('calAssignCheck', this.checked)" class="sr-only" ${adderConfig.calAssignCheck ? 'checked' : ''} />
+                  <span class="text-xs font-bold text-slate-600 select-none">課題提出</span>
+               </label>
+               <input id="calAssignTimeInput" type="time" value="${adderConfig.calAssignTime}" class="bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}" />
+             </div>
+           </div>
+        </div>
+      </div>
 
         <div class="p-4 md:p-6 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
           <label class="flex items-center gap-3 cursor-pointer group">
@@ -1281,8 +1178,8 @@ function renderModal() {
                 <span class="text-blue-600">自主的な目標期限</span>として登録する
               </span>
           </label>
-          <button onclick="saveAdderTasks()" class="w-full md:w-auto bg-slate-800 text-white font-bold tracking-wide py-2.5 px-8 rounded-xl hover:bg-slate-700 transition-colors flex items-center justify-center gap-2 shadow-md hover:shadow-lg">
-             <i data-lucide="plus" class="w-4 h-4"></i> タスクを一括生成
+          <button onclick="saveAdderTasks()" class="w-full md:w-auto bg-blue-600 text-white font-bold tracking-wide py-2.5 px-8 rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 shadow-md hover:shadow-lg">
+             <i data-lucide="calendar" class="w-4 h-4"></i> スケジュールを保存
           </button>
         </div>
       </div>
@@ -1292,7 +1189,7 @@ function renderModal() {
     lucide.createIcons();
   }
 
-  if (adderConfig.add_mode === 'calendar' && typeof window.flatpickr !== 'undefined') {
+  if (typeof window.flatpickr !== 'undefined') {
      flatpickr('#multi-calendar', {
         inline: true,
         mode: "multiple",
@@ -1311,160 +1208,9 @@ function renderModal() {
 
 // End of logic
 
-// ------ GOOGLE CALENDAR ------
-let tokenClient;
-
-function createTokenClient() {
-  if (!state.gcalClientId || typeof google === 'undefined') return false;
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: state.gcalClientId,
-    scope: 'https://www.googleapis.com/auth/calendar',
-    callback: (tokenResponse) => {
-      if (tokenResponse && tokenResponse.access_token) {
-        state.gcalToken = tokenResponse.access_token;
-        saveData();
-        fetchGcalList();
-      }
-    },
-  });
-  return true;
-}
-
-function gcalLogin() {
-  if (!state.gcalClientId) {
-    alert("先にGoogle OAuth クライアントIDを設定してください。");
-    return;
-  }
-  if (!tokenClient) {
-    if (!createTokenClient()) {
-       alert("Google APIの読み込みに失敗しました。時間をおいて再試行してください。");
-       return;
-    }
-  }
-  tokenClient.requestAccessToken({ prompt: 'consent' });
-}
-
-function gcalLogout() {
-  state.gcalToken = null;
-  state.gcalOptions = [];
-  saveData();
-  render();
-}
-
-async function fetchGcalList() {
-  if (!state.gcalToken) return;
-  try {
-    const res = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
-      headers: { Authorization: `Bearer ${state.gcalToken}` }
-    });
-    if (res.status === 401) {
-      gcalLogout();
-      return;
-    }
-    const data = await res.json();
-    if (data.items) {
-      state.gcalOptions = data.items.map(item => ({ id: item.id, summary: item.summary }));
-      saveData();
-      render();
-    }
-  } catch(e) {
-    console.error(e);
-  }
-}
-
-async function exportToGoogleCalendar() {
-  if (!state.gcalToken) return;
-  const calendarId = state.gcalTargetId || 'primary';
-  const tasksToExport = state.tasks.filter(t => !t.completed);
-  if (tasksToExport.length === 0) {
-    alert("登録できる未完了タスクがありません。");
-    return;
-  }
-  
-  if (!confirm(`未完了のタスク ${tasksToExport.length} 件をGoogleカレンダーに登録しますか？\n(既に登録済みのタスクが重複して登録される可能性があります)`)) return;
-
-  const pad = n => n.toString().padStart(2, '0');
-  let successCount = 0;
-  let hasError = false;
-
-  const reqHeaders = {
-    'Authorization': `Bearer ${state.gcalToken}`,
-    'Content-Type': 'application/json'
-  };
-
-  for (const task of tasksToExport) {
-    const course = state.courses.find(c => c.id === task.courseId);
-    if (!course) continue;
-    
-    const d = new Date(task.date);
-    const isAllDay = task.type === 'delivery';
-    
-    const summary = `${course.name} - ${task.lectureName} [${typeLabels[task.type]}]`;
-    const description = `タスク種類: ${typeLabels[task.type]}\n講義名: ${task.lectureName}\n科目: ${course.name}\n自動カレンダー同期`;
-    
-    const pushEvent = async (eventBody) => {
-        try {
-          const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
-            method: 'POST',
-            headers: reqHeaders,
-            body: JSON.stringify(eventBody)
-          });
-          if (res.ok) successCount++;
-          else hasError = true;
-        } catch(e) {
-          console.error(e);
-          hasError = true;
-        }
-    };
-    
-    if (isAllDay) {
-       const dateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-       const nextDay = new Date(d);
-       nextDay.setDate(d.getDate() + 1);
-       const endDateStr = `${nextDay.getFullYear()}-${pad(nextDay.getMonth()+1)}-${pad(nextDay.getDate())}`;
-       
-       await pushEvent({
-         summary, description,
-         start: { date: dateStr },
-         end: { date: endDateStr }
-       });
-    } else {
-       // Start of task as deadline time
-       const startUtc = new Date(d.getTime() + d.getTimezoneOffset() * 60000);
-       const endUtc = new Date(startUtc.getTime() + 60*60*1000);
-
-       await pushEvent({
-         summary, description,
-         start: { dateTime: d.toISOString() },
-         end: { dateTime: new Date(d.getTime() + 60*60*1000).toISOString() }
-       });
-       
-       // Reminder task 24 hours ago
-       const rStart = new Date(d.getTime() - 24*60*60*1000);
-       const rEnd = new Date(rStart.getTime() + 60*60*1000);
-       await pushEvent({
-         summary: `[確実なリマインド] ${summary}`, description,
-         start: { dateTime: rStart.toISOString() },
-         end: { dateTime: rEnd.toISOString() }
-       });
-    }
-  }
-  
-  if (hasError) {
-    alert(`${successCount} 件の予定を登録しましたが、一部でエラーが発生しました。`);
-  } else {
-    alert(`${successCount} 件の予定を登録しました。`);
-  }
-}
-
 // ------ INIT ------
 loadData();
 render();
-if (state.gcalToken) {
-  setTimeout(() => {
-    fetchGcalList();
-  }, 1000);
-}
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW registration failed', err));
 }
