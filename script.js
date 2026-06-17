@@ -61,6 +61,50 @@ function confirmAction(message, onConfirm) {
   };
 }
 
+function encodeBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  return btoa(bin);
+}
+
+function decodeBase64(b64) {
+  const bin = atob(b64.replace(/[^A-Za-z0-9+/=]/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+async function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  if (navigator.canShare && navigator.canShare({ files: [new File([blob], filename, { type: mimeType })] })) {
+    try {
+      await navigator.share({
+        files: [new File([blob], filename, { type: mimeType })]
+      });
+      return; 
+    } catch (e) {
+      // User cancelled
+    }
+  }
+
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  }, 100);
+}
+
 let storageCrashed = false;
 
 function loadData() {
@@ -212,7 +256,7 @@ function generateICS(onlyModified = false) {
 
   const backupData = JSON.stringify({ courses: state.courses, tasks: state.tasks });
   // 安全なBase64エンコード
-  const backupB64 = window.btoa(encodeURIComponent(backupData).replace(/%([0-9A-F]{2})/g, (match, p1) => String.fromCharCode('0x' + p1)));
+  const backupB64 = encodeBase64(backupData);
   const chunkedBackup = backupB64.match(/.{1,60}/g)?.join('\\n ') || '';
 
   const backupLines = createICSEvent({
@@ -293,52 +337,24 @@ function createICSTodo({ uid, start, summary, description }) {
   return lines;
 }
 
-function exportDataJson() {
+async function exportDataJson() {
   try {
     const backupData = JSON.stringify({ courses: state.courses, tasks: state.tasks }, null, 2);
-    const blob = new Blob([backupData], { type: 'application/json;charset=utf-8' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = "unicourse_backup.json";
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-    }, 100);
-    
-    showToast("JSONエクスポートを開始しました");
+    await downloadFile("unicourse_backup.json", backupData, 'application/json;charset=utf-8');
+    showToast("JSONエクスポートを完了しました");
   } catch (e) {
     showToast("エラーが発生しました: " + e.message, "error");
   }
 }
 
-function exportData() {
+async function exportData() {
   const onlyModified = document.getElementById('exportOnlyModified')?.checked || false;
   try {
     const icsContent = generateICS(onlyModified);
-    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = "unicourse_backup.ics";
-    a.target = "_blank"; // Apps inside iframes/webviews can crash if they try to download directly in same tab
-    a.rel = "noopener noreferrer";
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-    }, 100);
-    
+    await downloadFile("unicourse_backup.ics", icsContent, 'text/calendar;charset=utf-8');
     state.lastExportTime = Date.now();
     saveData();
-    showToast("エクスポートを開始しました");
+    showToast("エクスポートを完了しました");
   } catch (e) {
     showToast("エラーが発生しました: " + e.message, "error");
   }
@@ -360,20 +376,36 @@ function copyData() {
   }
 }
 
-function importFromClipboard() {
-  if (navigator.clipboard && navigator.clipboard.readText) {
-    navigator.clipboard.readText().then(text => {
-      if (!text) {
-        showToast("クリップボードは空です。", "error");
-        return;
-      }
-      importData(text);
-    }).catch(e => {
-      showToast("クリップボードの読み取りに失敗しました: " + e.message, "error");
-    });
-  } else {
-    showToast("ご使用の環境ではクリップボードからの読み取りを使用できません。", "error");
-  }
+function openTextImportModal() {
+  const root = document.createElement('div');
+  root.className = 'fixed inset-0 bg-slate-900/50 z-[9999] flex items-center justify-center p-4 animate-in fade-in';
+  root.innerHTML = `
+    <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-5 flex flex-col gap-4">
+       <div class="flex items-center gap-3 text-slate-800 font-bold text-lg">
+         <i data-lucide="clipboard-paste" class="w-5 h-5 text-blue-600"></i>
+         テキストからインポート
+       </div>
+       <p class="text-sm text-slate-600">エクスポートしたデータ (JSON または ics 中のデータ) をテキストエリアに貼り付けてください。</p>
+       <textarea id="import-text" class="w-full border border-slate-300 rounded-lg p-3 text-sm h-40 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="データをここに貼り付け..."></textarea>
+       <div class="flex justify-end gap-2 mt-2">
+         <button id="btn-cancel-import" class="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">キャンセル</button>
+         <button id="btn-ok-import" class="px-4 py-2 text-sm font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm">インポートを実行</button>
+       </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+  if (window.lucide) lucide.createIcons({root});
+  
+  root.querySelector('#btn-cancel-import').onclick = () => root.remove();
+  root.querySelector('#btn-ok-import').onclick = () => {
+     const text = root.querySelector('#import-text').value;
+     if (!text || !text.trim()) {
+       showToast("データが入力されていません。", "error");
+       return;
+     }
+     root.remove();
+     importData(text);
+  };
 }
 
 function importData(dataString) {
@@ -384,11 +416,7 @@ function importData(dataString) {
     } else {
       const match = dataString.match(/\[DATA_START\]([\s\S]*?)\[DATA_END\]/);
       if (match) {
-        // 余計な文字（改行、スペース等）を除去して純粋なBase64文字列にする
-        const b64 = match[1].replace(/[^A-Za-z0-9+/=]/g, '');
-        // 安全なBase64デコード
-        const jsonString = decodeURIComponent(Array.prototype.map.call(window.atob(b64), c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
-        parsed = JSON.parse(jsonString);
+        parsed = JSON.parse(decodeBase64(match[1]));
       }
     }
     
@@ -1044,8 +1072,8 @@ function renderSettingsTab() {
             <button onclick="copyData()" class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
               <i data-lucide="copy" class="w-4 h-4"></i> icsデータをコピー
             </button>
-            <button onclick="importFromClipboard()" class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              <i data-lucide="clipboard-paste" class="w-4 h-4"></i> クリップボードから追加
+            <button onclick="openTextImportModal()" class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+              <i data-lucide="clipboard-paste" class="w-4 h-4"></i> テキスト直接入力で追加
             </button>
           </div>
         </div>
