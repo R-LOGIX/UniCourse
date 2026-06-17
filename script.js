@@ -446,19 +446,38 @@ function startEditTask(taskId) {
 }
 
 function saveEditTask() {
-  const t = state.tasks.find(x => x.id === state.editingTaskId);
-  if (t && state.editTaskData) {
-    t.courseId = state.editTaskData.courseId;
-    t.lectureName = state.editTaskData.lectureName.trim() || '無題の講義';
-    t.type = state.editTaskData.type;
-    t.date = `${state.editTaskData.dateStr}T${state.editTaskData.timeStr || '00:00'}:00`;
-    t.isSelfDeadline = state.editTaskData.isSelfDeadline;
-    t.updatedAt = Date.now();
-    saveData();
+  if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+    document.activeElement.blur();
   }
-  state.editingTaskId = null;
-  state.editTaskData = null;
-  render();
+  
+  setTimeout(() => {
+    const t = state.tasks.find(x => x.id === state.editingTaskId);
+    if (t) {
+      // Read directly from DOM to ensure we get the latest value (especially for mobile time pickers)
+      const courseInput = document.getElementById('edit-course-input');
+      const lecInput = document.getElementById('edit-lecture-input');
+      const typeInput = document.getElementById('edit-type-input');
+      const dateInput = document.getElementById('edit-date-input');
+      const timeInput = document.getElementById('edit-time-input');
+      const selfInput = document.getElementById('edit-self-input');
+
+      if (courseInput) t.courseId = courseInput.value;
+      if (lecInput) t.lectureName = lecInput.value.trim() || '無題の講義';
+      if (typeInput) t.type = typeInput.value;
+      if (selfInput) t.isSelfDeadline = selfInput.checked;
+      
+      const d = dateInput ? dateInput.value : (state.editTaskData ? state.editTaskData.dateStr : '');
+      const tm = timeInput ? timeInput.value : (state.editTaskData ? state.editTaskData.timeStr : '');
+      
+      t.date = `${d}T${tm || '00:00'}:00`;
+      t.updatedAt = Date.now();
+      saveData();
+    }
+    state.editingTaskId = null;
+    state.editTaskData = null;
+    render();
+    showToast("タスクを保存しました");
+  }, 100);
 }
 
 function cancelEditTask() {
@@ -632,22 +651,22 @@ function renderTasksTab() {
                     return `
                     <div class="flex flex-col gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg -ml-1.5 transition-colors my-1">
                       <div class="flex flex-wrap gap-2 items-center">
-                         <select onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white max-w-[120px]">
+                         <select id="edit-course-input" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
                            ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
                          </select>
-                         <input type="text" value="${state.editTaskData.lectureName}" oninput="state.editTaskData.lectureName=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs w-28 outline-none" placeholder="講義名" />
-                         <select onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white">
+                         <input type="text" id="edit-lecture-input" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
+                         <select id="edit-type-input" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
                            <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
                            <option value="watch" ${state.editTaskData.type==='watch'?'selected':''}>視聴期限</option>
                            <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
                          </select>
-                         <input type="date" value="${state.editTaskData.dateStr}" onchange="state.editTaskData.dateStr=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none w-[110px]" />
-                         <input type="time" value="${state.editTaskData.timeStr}" onchange="state.editTaskData.timeStr=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none w-20" />
-                         <label class="flex items-center gap-1 text-xs cursor-pointer"><input type="checkbox" ${state.editTaskData.isSelfDeadline?'checked':''} onchange="state.editTaskData.isSelfDeadline=this.checked" /> 自主期限</label>
+                         <input type="date" id="edit-date-input" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
+                         <input type="time" id="edit-time-input" value="${state.editTaskData.timeStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[100px]" />
+                         <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
                       </div>
                       <div class="flex justify-end gap-2">
-                         <button onclick="cancelEditTask()" class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded font-bold text-slate-700 transition">キャンセル</button>
-                         <button onclick="saveEditTask()" class="text-xs bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded font-bold text-white transition">保存</button>
+                         <button onclick="cancelEditTask()" class="text-sm bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded font-bold text-slate-700 transition">キャンセル</button>
+                         <button onclick="saveEditTask()" class="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded font-bold text-white transition">保存</button>
                       </div>
                     </div>
                     `;
@@ -742,22 +761,22 @@ function renderTasksTab() {
                     return `
                     <div class="flex flex-col gap-2 p-3 bg-blue-50 border border-blue-100 transition-colors">
                       <div class="flex flex-wrap gap-2 items-center">
-                         <select onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white max-w-[120px]">
+                         <select id="edit-course-input" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
                            ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
                          </select>
-                         <input type="text" value="${state.editTaskData.lectureName}" oninput="state.editTaskData.lectureName=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs w-28 outline-none" placeholder="講義名" />
-                         <select onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white">
+                         <input type="text" id="edit-lecture-input" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
+                         <select id="edit-type-input" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
                            <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
                            <option value="watch" ${state.editTaskData.type==='watch'?'selected':''}>視聴期限</option>
                            <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
                          </select>
-                         <input type="date" value="${state.editTaskData.dateStr}" onchange="state.editTaskData.dateStr=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none w-[110px]" />
-                         <input type="time" value="${state.editTaskData.timeStr}" onchange="state.editTaskData.timeStr=this.value" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none w-20" />
-                         <label class="flex items-center gap-1 text-xs cursor-pointer"><input type="checkbox" ${state.editTaskData.isSelfDeadline?'checked':''} onchange="state.editTaskData.isSelfDeadline=this.checked" /> 自主期限</label>
+                         <input type="date" id="edit-date-input" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
+                         <input type="time" id="edit-time-input" value="${state.editTaskData.timeStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[100px]" />
+                         <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
                       </div>
                       <div class="flex justify-end gap-2 mt-1">
-                         <button onclick="cancelEditTask()" class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded font-bold text-slate-700 transition">キャンセル</button>
-                         <button onclick="saveEditTask()" class="text-xs bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded font-bold text-white transition">保存</button>
+                         <button onclick="cancelEditTask()" class="text-sm bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded font-bold text-slate-700 transition">キャンセル</button>
+                         <button onclick="saveEditTask()" class="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded font-bold text-white transition">保存</button>
                       </div>
                     </div>
                     `;
@@ -1138,7 +1157,7 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calDeliveryCheck', this.checked)" class="sr-only" ${adderConfig.calDeliveryCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">配信日</span>
                </label>
-               <input id="calDeliveryTimeInput" type="time" value="${adderConfig.calDeliveryTime}" class="bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calDeliveryTimeInput" type="time" value="${adderConfig.calDeliveryTime}" class="bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}" />
              </div>
              
              <!-- Watch -->
@@ -1150,7 +1169,7 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calWatchCheck', this.checked)" class="sr-only" ${adderConfig.calWatchCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">視聴期限</span>
                </label>
-               <input id="calWatchTimeInput" type="time" value="${adderConfig.calWatchTime}" class="bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calWatchTimeInput" type="time" value="${adderConfig.calWatchTime}" class="bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}" />
              </div>
              
              <!-- Assign -->
@@ -1162,7 +1181,7 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calAssignCheck', this.checked)" class="sr-only" ${adderConfig.calAssignCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">課題提出</span>
                </label>
-               <input id="calAssignTimeInput" type="time" value="${adderConfig.calAssignTime}" class="bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-xs ml-auto w-24 ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calAssignTimeInput" type="time" value="${adderConfig.calAssignTime}" class="bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}" />
              </div>
            </div>
         </div>
