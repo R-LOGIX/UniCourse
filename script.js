@@ -680,7 +680,7 @@ function renderTasksTab() {
                       <span class="font-bold tabular-nums ${dateColor}">${formatTaskDate(task.date)}</span>
                       ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ''}
                     </div>
-                    <div class="flex items-center gap-1 opacity-0 group-hover/task:opacity-100 md:opacity-100 transition-opacity shrink-0">
+                    <div class="flex items-center gap-1 opacity-100 shrink-0">
                       <button onclick="startEditTask('${task.id}')" class="text-slate-300 hover:text-blue-500 p-1 hover:bg-blue-50 rounded" title="タスク編集">
                         <i data-lucide="edit-2" class="w-4 h-4"></i>
                       </button>
@@ -797,7 +797,7 @@ function renderTasksTab() {
                       ${task.date.includes('T00:00:00') && task.type === 'delivery' ? '時間未定' : formatTaskTimeOnly(task.date)}
                     </div>
                   </div>
-                  <div class="flex flex-col sm:flex-row items-center gap-1 opacity-0 group-hover/task:opacity-100 md:opacity-100 transition-opacity shrink-0">
+                  <div class="flex flex-col sm:flex-row items-center gap-1 opacity-100 shrink-0">
                     <button onclick="startEditTask('${task.id}')" class="text-slate-300 hover:text-blue-500 p-1.5 hover:bg-blue-50 rounded" title="タスク編集">
                       <i data-lucide="edit-2" class="w-4 h-4"></i>
                     </button>
@@ -1242,11 +1242,12 @@ function saveCustomTimePicker() {
     if (typeof window[tpConf.callback] === 'function') {
       window[tpConf.callback](timeStr);
     } else {
-      try {
-        eval(`${tpConf.callback}("${timeStr}")`);
-      } catch (e) {
-        console.error(e);
-      }
+      if (tpConf.callback === 'setCalDeliveryTime') setCalDeliveryTime(timeStr);
+      else if (tpConf.callback === 'setCalWatchTime') setCalWatchTime(timeStr);
+      else if (tpConf.callback === 'setCalAssignTime') setCalAssignTime(timeStr);
+      else if (tpConf.callback === 'setEditTaskTime') setEditTaskTime(timeStr);
+      else if (tpConf.callback === 'setTaskModalTime') setTaskModalTime(timeStr);
+      else console.error('Callback not found:', tpConf.callback);
     }
   }
   closeCustomTimePicker();
