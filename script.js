@@ -1037,22 +1037,11 @@ function closeScheduleAdder() {
 
 function updateCalField(field, value) {
   adderConfig[field] = value;
-  // Some fields might need re-render if they affect UI state
-  if (field.includes('Check')) renderModal();
+  renderModal();
 }
 
 function saveAdderTasks() {
   const newTasks = [];
-  
-  // Grab direct values to guarantee we save user input properly
-  const delTimeInput = document.getElementById('calDeliveryTimeInput');
-  if (delTimeInput) adderConfig.calDeliveryTime = delTimeInput.value;
-  
-  const watchTimeInput = document.getElementById('calWatchTimeInput');
-  if (watchTimeInput) adderConfig.calWatchTime = watchTimeInput.value;
-  
-  const assignTimeInput = document.getElementById('calAssignTimeInput');
-  if (assignTimeInput) adderConfig.calAssignTime = assignTimeInput.value;
   
   if (adderConfig.calendarDates.length === 0) {
     showToast("カレンダーで日付を1つ以上選択してください", "error");
@@ -1252,6 +1241,12 @@ function saveCustomTimePicker() {
     const timeStr = `${String(tpConf.h).padStart(2, '0')}:${String(tpConf.m).padStart(2, '0')}`;
     if (typeof window[tpConf.callback] === 'function') {
       window[tpConf.callback](timeStr);
+    } else {
+      try {
+        eval(`${tpConf.callback}("${timeStr}")`);
+      } catch (e) {
+        console.error(e);
+      }
     }
   }
   closeCustomTimePicker();
