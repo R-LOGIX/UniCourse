@@ -62,47 +62,37 @@ function confirmAction(message, onConfirm) {
 }
 
 function encodeBase64(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    bin += String.fromCharCode(bytes[i]);
-  }
-  return btoa(bin);
+  return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+    return String.fromCharCode('0x' + p1);
+  }));
 }
 
 function decodeBase64(b64) {
   const bin = atob(b64.replace(/[^A-Za-z0-9+/=]/g, ''));
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) {
-    bytes[i] = bin.charCodeAt(i);
-  }
-  return new TextDecoder().decode(bytes);
+  return decodeURIComponent(bin.split('').map(function(c) {
+    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+  }).join(''));
 }
 
 async function downloadFile(filename, content, mimeType) {
   const blob = new Blob([content], { type: mimeType });
-  if (navigator.canShare && navigator.canShare({ files: [new File([blob], filename, { type: mimeType })] })) {
-    try {
-      await navigator.share({
-        files: [new File([blob], filename, { type: mimeType })]
-      });
-      return; 
-    } catch (e) {
-      // User cancelled
-    }
-  }
-
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
   a.style.display = 'none';
   document.body.appendChild(a);
-  a.click();
+  try {
+    a.click();
+  } catch(e) {
+    console.error("Download failed:", e);
+  }
   setTimeout(() => {
     document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
-  }, 100);
+  }, 300);
 }
 
 let storageCrashed = false;
@@ -411,12 +401,20 @@ function openTextImportModal() {
 function importData(dataString) {
   try {
     let parsed = null;
-    if (dataString.trim().startsWith('{')) {
-      parsed = JSON.parse(dataString);
+    let str = dataString.trim();
+    if (str.startsWith('{')) {
+      parsed = JSON.parse(str);
     } else {
-      const match = dataString.match(/\[DATA_START\]([\s\S]*?)\[DATA_END\]/);
+      const match = str.match(/\[DATA_START\]([\s\S]*?)\[DATA_END\]/);
       if (match) {
         parsed = JSON.parse(decodeBase64(match[1]));
+      } else {
+        // try parsing as pure base64
+        try {
+          parsed = JSON.parse(decodeBase64(str));
+        } catch(e) {
+           console.warn("Base64 parsing failed", e);
+        }
       }
     }
     
@@ -427,10 +425,10 @@ function importData(dataString) {
       render();
       showToast("データのインポートに成功しました");
     } else {
-      showToast("無効なデータ形式です。正しいバックアップファイル（.json または .ics）を選択してください。", "error");
+      showToast("無効なデータ形式です。正しいバックアップデータを選択するか、データをコピーして貼り付けてください。", "error");
     }
   } catch(e) {
-    showToast("データの読み込みに失敗しました。ファイルが破損している可能性があります。", "error");
+    showToast("データの読み込みに失敗しました。データが破損している可能性があります。", "error");
   }
 }
 
