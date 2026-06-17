@@ -211,7 +211,8 @@ function generateICS(onlyModified = false) {
   });
 
   const backupData = JSON.stringify({ courses: state.courses, tasks: state.tasks });
-  const backupB64 = window.btoa(unescape(encodeURIComponent(backupData)));
+  // 安全なBase64エンコード
+  const backupB64 = window.btoa(encodeURIComponent(backupData).replace(/%([0-9A-F]{2})/g, (match, p1) => String.fromCharCode('0x' + p1)));
   const chunkedBackup = backupB64.match(/.{1,60}/g)?.join('\\n ') || '';
 
   const backupLines = createICSEvent({
@@ -381,10 +382,12 @@ function importData(dataString) {
     if (dataString.trim().startsWith('{')) {
       parsed = JSON.parse(dataString);
     } else {
-      const match = dataString.match(/\[DATA_START\]([\\s\\S]*?)\[DATA_END\]/);
+      const match = dataString.match(/\[DATA_START\]([\s\S]*?)\[DATA_END\]/);
       if (match) {
-        const b64 = match[1].replace(/\\s\\\\n/g, '').replace(/\\s/g, '').replace(/\\\\n/g, '');
-        const jsonString = decodeURIComponent(escape(window.atob(b64)));
+        // 余計な文字（改行、スペース等）を除去して純粋なBase64文字列にする
+        const b64 = match[1].replace(/[^A-Za-z0-9+/=]/g, '');
+        // 安全なBase64デコード
+        const jsonString = decodeURIComponent(Array.prototype.map.call(window.atob(b64), c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
         parsed = JSON.parse(jsonString);
       }
     }
