@@ -292,6 +292,30 @@ function createICSTodo({ uid, start, summary, description }) {
   return lines;
 }
 
+function exportDataJson() {
+  try {
+    const backupData = JSON.stringify({ courses: state.courses, tasks: state.tasks }, null, 2);
+    const blob = new Blob([backupData], { type: 'application/json;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "unicourse_backup.json";
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+    
+    showToast("JSONエクスポートを開始しました");
+  } catch (e) {
+    showToast("エラーが発生しました: " + e.message, "error");
+  }
+}
+
 function exportData() {
   const onlyModified = document.getElementById('exportOnlyModified')?.checked || false;
   try {
@@ -971,40 +995,51 @@ function renderSettingsTab() {
         <ol class="list-decimal list-inside text-sm text-indigo-900 leading-relaxed space-y-2 mb-2">
           <li><strong>科目を登録する：</strong>「科目管理」タブから授業を追加し、「スケジュールを追加」から日程を一括登録します。</li>
           <li><strong>タスクの管理：</strong>「タスク」タブで、配信日・視聴期限・課題提出の予定を確認し、完了したものはチェックをつけます。</li>
-          <li><strong>カレンダーへ同期する：</strong>このアプリ自体には通知機能がありません。予定の通知を受け取るために、下のボタンから「カレンダー保存 (.ics)」を行い、お使いのスマホの Google Calendar や Apple カレンダー等にインポートしてください。</li>
+          <li><strong>カレンダーへ同期する (ics形式):</strong> 予定の通知を受け取るために「icsファイルをエクスポート」し、Google Calendar や Apple カレンダー等にインポートしてください。</li>
+          <li><strong>データのバックアップ・復元 (json形式):</strong> 他の端末やブラウザにデータを移行したい場合は、「jsonファイルをエクスポート」し、新しい環境で「jsonファイルをインポート」してください。</li>
         </ol>
       </div>
 
       <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-4">
         <div>
           <h3 class="font-bold text-slate-700 text-sm mb-2 flex items-center gap-2">
-             <i data-lucide="calendar" class="w-4 h-4"></i> カレンダー連携 / データ管理
+             <i data-lucide="calendar" class="w-4 h-4"></i> カレンダー連携 / データバックアップ
           </h3>
           <div class="text-sm text-slate-600 mb-3 leading-relaxed">
-             予定をGoogleカレンダー等に取り組むためのファイルを出力します。バックアップデータも含まれるため、機種変更時の復元にも使えます。<br/>
+             カレンダーに取り込むための「ics」と、データ復元用の「json」を出力できます。<br/>
              <span class="text-xs text-slate-400">※ボタンが機能しない場合は、アプリを「新しいタブで開く」からお試しください。</span>
           </div>
 
           <div class="mb-4">
             <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer p-2 bg-slate-50 rounded border border-slate-200">
               <input type="checkbox" id="exportOnlyModified" class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500">
-              <span>前回エクスポート時から<strong>追加・変更された予定のみ出力</strong>する</span>
+              <span>前回エクスポート時から<strong>追加・変更された予定のみ出力</strong>する (ics出力時のみ有効)</span>
             </label>
           </div>
 
-           <div class="flex flex-wrap gap-2">
-            <button onclick="exportData()" class="flex-1 min-w-[120px] bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button onclick="exportData()" class="bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
               <i data-lucide="download" class="w-4 h-4"></i> icsファイルをエクスポート
             </button>
-            <label class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer">
-              <i data-lucide="upload" class="w-4 h-4"></i> icsファイルをインポート
-              <input type="file" accept=".json,.ics" class="hidden" onchange="handleImport(event)" />
-            </label>
+            <button onclick="exportDataJson()" class="bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+              <i data-lucide="download" class="w-4 h-4"></i> jsonファイルをエクスポート
+            </button>
           </div>
           
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+            <label class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer">
+              <i data-lucide="upload" class="w-4 h-4"></i> icsファイルをインポート
+              <input type="file" accept=".ics" class="hidden" onchange="handleImport(event)" />
+            </label>
+            <label class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer">
+              <i data-lucide="upload" class="w-4 h-4"></i> jsonファイルをインポート
+              <input type="file" accept=".json" class="hidden" onchange="handleImport(event)" />
+            </label>
+          </div>
+
           <div class="flex flex-wrap gap-2 mt-2">
             <button onclick="copyData()" class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              <i data-lucide="copy" class="w-4 h-4"></i> クリップボードにコピー
+              <i data-lucide="copy" class="w-4 h-4"></i> icsデータをコピー
             </button>
             <button onclick="importFromClipboard()" class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
               <i data-lucide="clipboard-paste" class="w-4 h-4"></i> クリップボードから追加
