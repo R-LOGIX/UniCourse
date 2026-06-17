@@ -62,37 +62,75 @@ function confirmAction(message, onConfirm) {
 }
 
 function encodeBase64(str) {
-  return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
-    return String.fromCharCode('0x' + p1);
-  }));
+  return btoa(unescape(encodeURIComponent(str)));
 }
 
 function decodeBase64(b64) {
-  const bin = atob(b64.replace(/[^A-Za-z0-9+/=]/g, ''));
-  return decodeURIComponent(bin.split('').map(function(c) {
-    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-  }).join(''));
+  return decodeURIComponent(escape(atob(b64.replace(/[^A-Za-z0-9+/=]/g, ''))));
 }
 
-async function downloadFile(filename, content, mimeType) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  try {
-    a.click();
-  } catch(e) {
-    console.error("Download failed:", e);
-  }
-  setTimeout(() => {
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-  }, 300);
+function showExportModal(title, content, filename, mimeType) {
+  const root = document.createElement('div');
+  root.className = 'fixed inset-0 bg-slate-900/50 z-[9999] flex items-center justify-center p-4 animate-in fade-in';
+  root.innerHTML = `
+    <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-5 flex flex-col gap-4 max-h-[90vh]">
+       <div class="flex items-center gap-3 text-slate-800 font-bold text-lg">
+         <i data-lucide="download" class="w-5 h-5 text-blue-600"></i>
+         ${title}
+       </div>
+       <p class="text-sm text-slate-600">
+         環境によってファイルの直接ダウンロードが失敗する場合があるため、データをテキストとして出力します。コピーして安全な場所に保存するか、「ファイルとして保存」をお試しください。
+       </p>
+       <textarea id="export-text" class="w-full border border-slate-300 rounded-lg p-3 text-xs font-mono h-48 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50" readonly></textarea>
+       <div class="flex flex-col sm:flex-row justify-end gap-2 mt-2">
+         <button id="btn-cancel-export" class="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors order-3 sm:order-1">閉じる</button>
+         <button id="btn-copy-export" class="px-4 py-2 text-sm font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2 order-2"><i data-lucide="copy" class="w-4 h-4"></i>コピー</button>
+         <button id="btn-download-export" class="px-4 py-2 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2 order-1 sm:order-3"><i data-lucide="save" class="w-4 h-4"></i>ファイルとして保存</button>
+       </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+  if (window.lucide) lucide.createIcons({root});
+  
+  const textarea = root.querySelector('#export-text');
+  textarea.value = content;
+  
+  root.querySelector('#btn-cancel-export').onclick = () => root.remove();
+  
+  root.querySelector('#btn-copy-export').onclick = () => {
+     textarea.select();
+     if (navigator.clipboard) {
+       navigator.clipboard.writeText(content).then(() => {
+         showToast("クリップボードにコピーしました");
+       }).catch(() => {
+         showToast("コピーに失敗しました。手動でコピーしてください。", "error");
+       });
+     } else {
+       document.execCommand('copy');
+       showToast("コピーしました。");
+     }
+  };
+
+  root.querySelector('#btn-download-export').onclick = () => {
+    try {
+      const blob = new Blob([content], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      }, 300);
+    } catch(e) {
+      showToast("ファイルダウンロードに失敗しました。手動でコピーしてください。", "error");
+    }
+  };
 }
 
 let storageCrashed = false;
@@ -269,10 +307,10 @@ function generateICS(onlyModified = false) {
       curr = curr.substring(70);
     }
     folded.push(curr);
-    return folded.join('\\r\\n ');
+    return folded.join('\r\n ');
   };
 
-  return icsLines.map(foldLine).join('\\r\\n');
+  return icsLines.map(foldLine).join('\r\n');
 }
 
 function formatDateBlock(date) {
@@ -330,8 +368,7 @@ function createICSTodo({ uid, start, summary, description }) {
 async function exportDataJson() {
   try {
     const backupData = JSON.stringify({ courses: state.courses, tasks: state.tasks }, null, 2);
-    await downloadFile("unicourse_backup.json", backupData, 'application/json;charset=utf-8');
-    showToast("JSONエクスポートを完了しました");
+    showExportModal("JSONデータのエクスポート", backupData, "unicourse_backup.json", 'application/json;charset=utf-8');
   } catch (e) {
     showToast("エラーが発生しました: " + e.message, "error");
   }
@@ -341,10 +378,9 @@ async function exportData() {
   const onlyModified = document.getElementById('exportOnlyModified')?.checked || false;
   try {
     const icsContent = generateICS(onlyModified);
-    await downloadFile("unicourse_backup.ics", icsContent, 'text/calendar;charset=utf-8');
+    showExportModal("ICSファイルのエクスポート", icsContent, "unicourse_backup.ics", 'text/calendar;charset=utf-8');
     state.lastExportTime = Date.now();
     saveData();
-    showToast("エクスポートを完了しました");
   } catch (e) {
     showToast("エラーが発生しました: " + e.message, "error");
   }
