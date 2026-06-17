@@ -651,18 +651,18 @@ function renderTasksTab() {
                     return `
                     <div class="flex flex-col gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg -ml-1.5 transition-colors my-1">
                       <div class="flex flex-wrap gap-2 items-center">
-                         <select id="edit-course-input" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
+                         <select id="edit-course-input" onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
                            ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
                          </select>
-                         <input type="text" id="edit-lecture-input" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
-                         <select id="edit-type-input" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
+                         <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
+                         <select id="edit-type-input" onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
                            <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
                            <option value="watch" ${state.editTaskData.type==='watch'?'selected':''}>視聴期限</option>
                            <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
                          </select>
-                         <input type="date" id="edit-date-input" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
-                         <input type="time" id="edit-time-input" value="${state.editTaskData.timeStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[100px]" />
-                         <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
+                         <input type="date" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
+                         <input type="time" id="edit-time-input" oninput="state.editTaskData.timeStr=this.value" value="${state.editTaskData.timeStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[100px]" />
+                         <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" onchange="state.editTaskData.isSelfDeadline=this.checked" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
                       </div>
                       <div class="flex justify-end gap-2">
                          <button onclick="cancelEditTask()" class="text-sm bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded font-bold text-slate-700 transition">キャンセル</button>
@@ -761,18 +761,18 @@ function renderTasksTab() {
                     return `
                     <div class="flex flex-col gap-2 p-3 bg-blue-50 border border-blue-100 transition-colors">
                       <div class="flex flex-wrap gap-2 items-center">
-                         <select id="edit-course-input" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
+                         <select id="edit-course-input" onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
                            ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
                          </select>
-                         <input type="text" id="edit-lecture-input" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
-                         <select id="edit-type-input" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
+                         <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
+                         <select id="edit-type-input" onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
                            <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
                            <option value="watch" ${state.editTaskData.type==='watch'?'selected':''}>視聴期限</option>
                            <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
                          </select>
-                         <input type="date" id="edit-date-input" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
-                         <input type="time" id="edit-time-input" value="${state.editTaskData.timeStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[100px]" />
-                         <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
+                         <input type="date" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
+                         <input type="time" id="edit-time-input" oninput="state.editTaskData.timeStr=this.value" value="${state.editTaskData.timeStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[100px]" />
+                         <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" onchange="state.editTaskData.isSelfDeadline=this.checked" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
                       </div>
                       <div class="flex justify-end gap-2 mt-1">
                          <button onclick="cancelEditTask()" class="text-sm bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded font-bold text-slate-700 transition">キャンセル</button>
@@ -1104,8 +1104,8 @@ function renderModal() {
   }
 
   root.innerHTML = `
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm overflow-y-auto">
-      <div class="bg-white max-w-3xl w-full rounded-2xl shadow-xl flex flex-col m-auto max-h-[95vh] overflow-hidden border border-slate-200">
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+      <div class="bg-white max-w-3xl w-full rounded-2xl shadow-xl flex flex-col m-auto max-h-[85dvh] md:max-h-[85vh] border border-slate-200">
         
         <div class="flex flex-col border-b border-slate-100 bg-slate-50/50 shrink-0">
           <div class="flex justify-between items-center p-6 pb-4">
@@ -1118,9 +1118,14 @@ function renderModal() {
                 <p class="text-[11px] text-slate-500 font-medium mt-0.5">授業のスケジュールをカレンダーで一括作成できます</p>
               </div>
             </div>
-            <button onclick="closeScheduleAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
-              <i data-lucide="x" class="w-5 h-5"></i>
-            </button>
+            <div class="flex items-center gap-3">
+              <button onclick="saveAdderTasks()" class="text-sm bg-blue-600 text-white font-bold py-1.5 px-4 rounded-lg hover:bg-blue-700 transition shadow-sm flex items-center gap-1.5">
+                 保存
+              </button>
+              <button onclick="closeScheduleAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
+            </div>
           </div>
           
           <div class="px-6 pb-4 pt-1 flex items-center justify-between border-t border-slate-100/50">
@@ -1135,7 +1140,7 @@ function renderModal() {
           </div>
         </div>
 
-      <div class="flex flex-col md:flex-row p-6 overflow-y-auto bg-slate-50/30 gap-6">
+      <div class="flex-1 flex flex-col md:flex-row p-6 overflow-y-auto bg-slate-50/30 gap-6">
         <div class="flex flex-col gap-2 relative z-10 w-full md:w-auto">
           <p class="text-sm font-bold text-slate-700 flex items-center gap-1.5"><i data-lucide="calendar" class="w-4 h-4"></i> 日付を複数選択</p>
           <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-2 flatpickr-wrapper w-full max-w-[310px]">
@@ -1157,7 +1162,7 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calDeliveryCheck', this.checked)" class="sr-only" ${adderConfig.calDeliveryCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">配信日</span>
                </label>
-               <input id="calDeliveryTimeInput" type="time" value="${adderConfig.calDeliveryTime}" class="bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calDeliveryTimeInput" oninput="updateCalField('calDeliveryTime', this.value)" type="time" value="${adderConfig.calDeliveryTime}" class="bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calDeliveryCheck ? 'opacity-50 pointer-events-none' : ''}" />
              </div>
              
              <!-- Watch -->
@@ -1169,7 +1174,7 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calWatchCheck', this.checked)" class="sr-only" ${adderConfig.calWatchCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">視聴期限</span>
                </label>
-               <input id="calWatchTimeInput" type="time" value="${adderConfig.calWatchTime}" class="bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calWatchTimeInput" oninput="updateCalField('calWatchTime', this.value)" type="time" value="${adderConfig.calWatchTime}" class="bg-amber-50 border border-amber-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calWatchCheck ? 'opacity-50 pointer-events-none' : ''}" />
              </div>
              
              <!-- Assign -->
@@ -1181,7 +1186,7 @@ function renderModal() {
                   <input type="checkbox" onchange="updateCalField('calAssignCheck', this.checked)" class="sr-only" ${adderConfig.calAssignCheck ? 'checked' : ''} />
                   <span class="text-xs font-bold text-slate-600 select-none">課題提出</span>
                </label>
-               <input id="calAssignTimeInput" type="time" value="${adderConfig.calAssignTime}" class="bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}" />
+               <input id="calAssignTimeInput" oninput="updateCalField('calAssignTime', this.value)" type="time" value="${adderConfig.calAssignTime}" class="bg-red-50 border border-red-200 rounded px-2 py-1 outline-none text-base ml-auto w-auto min-w-[100px] ${!adderConfig.calAssignCheck ? 'opacity-50 pointer-events-none' : ''}" />
              </div>
            </div>
         </div>
