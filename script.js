@@ -335,6 +335,22 @@ function copyData() {
   }
 }
 
+function importFromClipboard() {
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(text => {
+      if (!text) {
+        showToast("クリップボードは空です。", "error");
+        return;
+      }
+      importData(text);
+    }).catch(e => {
+      showToast("クリップボードの読み取りに失敗しました: " + e.message, "error");
+    });
+  } else {
+    showToast("ご使用の環境ではクリップボードからの読み取りを使用できません。", "error");
+  }
+}
+
 function importData(dataString) {
   try {
     let parsed = null;
@@ -984,6 +1000,15 @@ function renderSettingsTab() {
               <i data-lucide="upload" class="w-4 h-4"></i> icsファイルをインポート
               <input type="file" accept=".json,.ics" class="hidden" onchange="handleImport(event)" />
             </label>
+          </div>
+          
+          <div class="flex flex-wrap gap-2 mt-2">
+            <button onclick="copyData()" class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+              <i data-lucide="copy" class="w-4 h-4"></i> クリップボードにコピー
+            </button>
+            <button onclick="importFromClipboard()" class="flex-1 min-w-[120px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+              <i data-lucide="clipboard-paste" class="w-4 h-4"></i> クリップボードから追加
+            </button>
           </div>
         </div>
       </div>
