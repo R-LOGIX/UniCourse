@@ -2,8 +2,8 @@
 const STORAGE_KEY = 'ondemand_app_data';
 
 let state = {
-  activeTab: 'tasks',
-  taskSortMode: 'date', // 'course' or 'date'
+  activeTab: 'home',
+  taskSortMode: 'today', // 'today', 'course' or 'date'
   courses: [],
   tasks: [],
   showAddCourse: false,
@@ -15,7 +15,17 @@ let state = {
   editCourseDesc: '',
   editingLecture: null, // { courseId, oldName, newName }
   editingTaskId: null,
-  editTaskData: null
+  editTaskData: null,
+  showCustomAssignment: false,
+  customAssignInput: {
+    courseName: '',
+    dateStr: '',
+    timeStr: '23:59',
+    isSelfDeadline: false,
+    description: ''
+  },
+  widgets: ['deadlines', 'schedule'],
+  memoContent: ''
 };
 
 // Generate UUID-like short ID
@@ -148,6 +158,8 @@ function loadData() {
         updatedAt: t.updatedAt || 0
       }));
       state.lastExportTime = parsed.lastExportTime || 0;
+      if (parsed.widgets) state.widgets = parsed.widgets;
+      if (parsed.memoContent !== undefined) state.memoContent = parsed.memoContent;
     }
   } catch(e) {
     console.error('Failed to access localStorage:', e);
@@ -160,7 +172,9 @@ function saveData() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       courses: state.courses,
       tasks: state.tasks,
-      lastExportTime: state.lastExportTime || 0
+      lastExportTime: state.lastExportTime || 0,
+      widgets: state.widgets,
+      memoContent: state.memoContent
     }));
     
   } catch (e) {
@@ -217,168 +231,10 @@ function deleteTask(id) {
   render();
 }
 
-function generateICS(onlyModified = false) {
-  let icsLines = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//UniCourse//JP',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    'X-WR-CALNAME:UniCourse 講義予定'
-  ];
-
-  let tasksToExport = state.tasks;
-  if (onlyModified) {
-    tasksToExport = tasksToExport.filter(t => !state.lastExportTime || (t.updatedAt && t.updatedAt > state.lastExportTime));
-  }
-
-  tasksToExport.forEach(task => {
-    const defaultCourseObj = state.courses.find(c => c.id === task.courseId);
-    const courseName = defaultCourseObj ? defaultCourseObj.name : '不明な科目';
-    const typeStr = { delivery: '配信', watch: '視聴', assignment: '課題' }[task.type] || task.type;
-    
-    const startDate = new Date(task.date);
-    
-    if (task.type === 'delivery') {
-      const startStr = formatDateBlock(startDate);
-      const nextDay = new Date(startDate);
-      nextDay.setDate(nextDay.getDate() + 1);
-      const endStr = formatDateBlock(nextDay);
-      
-      const eventLines = createICSEvent({
-        uid: task.id + '-main@unicourse',
-        start: `VALUE=DATE:${startStr}`,
-        end: `VALUE=DATE:${endStr}`,
-        summary: `${courseName} - ${task.lectureName} [${typeStr}]`,
-        description: `タスク種類: ${typeStr}\\n講義名: ${task.lectureName}\\n科目: ${courseName}\\n\\n自動カレンダー同期`
-      });
-      icsLines = icsLines.concat(eventLines);
-    } else {
-      const start3h = new Date(startDate);
-      start3h.setHours(start3h.getHours() - 3);
-      
-      const startStr = formatDateTimeBlock(start3h);
-      
-      const eventLines = createICSTodo({
-        uid: task.id + '-main@unicourse',
-        start: startStr,
-        summary: `[締切3時間前] ${courseName} - ${task.lectureName} [${typeStr}]`,
-        description: ``
-      });
-      icsLines = icsLines.concat(eventLines);
-      
-      const remindStart = new Date(startDate);
-      remindStart.setHours(remindStart.getHours() - 24);
-      
-      const remStartStr = formatDateTimeBlock(remindStart);
-      
-      const reminderLines = createICSTodo({
-        uid: task.id + '-remind@unicourse',
-        start: remStartStr,
-        summary: `[締切24時間前] ${courseName} - ${task.lectureName} [${typeStr}]`,
-        description: ``
-      });
-      icsLines = icsLines.concat(reminderLines);
-    }
-  });
-
-  const backupData = JSON.stringify({ courses: state.courses, tasks: state.tasks });
-  // 安全なBase64エンコード
-  const backupB64 = encodeBase64(backupData);
-  const chunkedBackup = backupB64.match(/.{1,60}/g)?.join('\\n ') || '';
-
-  const backupLines = createICSEvent({
-    uid: 'backup@unicourse',
-    start: formatDateTimeBlock(new Date()),
-    end: formatDateTimeBlock(new Date()),
-    summary: 'UniCourse バックアップデータ（削除しないでください）',
-    description: `このイベントにはバックアップデータが含まれています。\\n[DATA_START]\\n ${chunkedBackup}\\n [DATA_END]`
-  });
-  
-  icsLines = icsLines.concat(backupLines);
-  icsLines.push('END:VCALENDAR');
-  
-  const foldLine = (line) => {
-    if (line.length <= 75) return line;
-    let folded = [];
-    let curr = line;
-    while (curr.length > 70) {
-      folded.push(curr.substring(0, 70));
-      curr = curr.substring(70);
-    }
-    folded.push(curr);
-    return folded.join('\r\n ');
-  };
-
-  return icsLines.map(foldLine).join('\r\n');
-}
-
-function formatDateBlock(date) {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(date.getUTCDate()).padStart(2, '0');
-  return `${y}${m}${d}`;
-}
-
-function formatDateTimeBlock(date) {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(date.getUTCDate()).padStart(2, '0');
-  const h = String(date.getUTCHours()).padStart(2, '0');
-  const min = String(date.getUTCMinutes()).padStart(2, '0');
-  const s = String(date.getUTCSeconds()).padStart(2, '0');
-  return `${y}${m}${d}T${h}${min}${s}Z`;
-}
-
-function createICSEvent({ uid, start, end, summary, description }) {
-  const dtstart = start.startsWith('VALUE=') ? `DTSTART;${start}` : `DTSTART:${start}`;
-  const dtend = end.startsWith('VALUE=') ? `DTEND;${end}` : `DTEND:${end}`;
-  const now = formatDateTimeBlock(new Date());
-  
-  return [
-    'BEGIN:VEVENT',
-    `UID:${uid}`,
-    `DTSTAMP:${now}`,
-    dtstart,
-    dtend,
-    `SUMMARY:${summary}`,
-    `DESCRIPTION:${description}`,
-    'END:VEVENT'
-  ];
-}
-
-function createICSTodo({ uid, start, summary, description }) {
-  const dtstart = start.startsWith('VALUE=') ? `DUE;${start}` : `DUE:${start}`;
-  const now = formatDateTimeBlock(new Date());
-  
-  let lines = [
-    'BEGIN:VTODO',
-    `UID:${uid}`,
-    `DTSTAMP:${now}`,
-    dtstart,
-    `SUMMARY:${summary}`
-  ];
-  if (description) {
-    lines.push(`DESCRIPTION:${description}`);
-  }
-  lines.push('END:VTODO');
-  return lines;
-}
-
-async function exportDataJson() {
+async function exportData() {
   try {
     const backupData = JSON.stringify({ courses: state.courses, tasks: state.tasks }, null, 2);
     showExportModal("JSONデータのエクスポート", backupData, "unicourse_backup.json", 'application/json;charset=utf-8');
-  } catch (e) {
-    showToast("エラーが発生しました: " + e.message, "error");
-  }
-}
-
-async function exportData() {
-  const onlyModified = document.getElementById('exportOnlyModified')?.checked || false;
-  try {
-    const icsContent = generateICS(onlyModified);
-    showExportModal("ICSファイルのエクスポート", icsContent, "unicourse_backup.ics", 'text/calendar;charset=utf-8');
     state.lastExportTime = Date.now();
     saveData();
   } catch (e) {
@@ -399,14 +255,14 @@ function openCombinedImportModal() {
        <div class="flex flex-col gap-3 pb-3 border-b border-slate-200">
          <p class="text-sm text-slate-600 font-medium">ファイルから読み込む場合：</p>
          <label class="bg-slate-50 border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold py-3 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer w-full text-center">
-           <i data-lucide="file-up" class="w-5 h-5"></i> ファイルを選択 (.ics / .json)
-           <input type="file" accept=".ics,.json" class="hidden" id="file-import-input" />
+           <i data-lucide="file-up" class="w-5 h-5"></i> ファイルを選択 (.json)
+           <input type="file" accept=".json,.ics" class="hidden" id="file-import-input" />
          </label>
        </div>
 
        <div class="flex flex-col gap-2 pt-1">
          <p class="text-sm text-slate-600 font-medium">テキストから読み込む場合：</p>
-         <p class="text-xs text-slate-500">コピーしたデータ (JSON または ics 中のデータ) を貼り付けてください。</p>
+         <p class="text-xs text-slate-500">コピーしたデータ (JSON形式、または古いエクスポートデータ) を貼り付けてください。</p>
          <textarea id="import-text" class="w-full border border-slate-300 rounded-lg p-3 text-sm h-32 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono" placeholder="データをここに貼り付け..."></textarea>
        </div>
 
@@ -604,15 +460,17 @@ function render() {
   const appEl = document.getElementById('app');
   let html = '';
 
-  if (state.activeTab === 'tasks') {
+  if (state.activeTab === 'home') {
+    html = renderHomeTab();
+  } else if (state.activeTab === 'tasks') {
     html = renderTasksTab();
   } else if (state.activeTab === 'courses') {
     html = renderCoursesTab();
   } else if (state.activeTab === 'settings') {
     html = renderSettingsTab();
   } else {
-    state.activeTab = 'tasks';
-    html = renderTasksTab();
+    state.activeTab = 'home';
+    html = renderHomeTab();
   }
 
   appEl.innerHTML = html;
@@ -621,6 +479,71 @@ function render() {
   if (window.lucide) {
     lucide.createIcons();
   }
+  
+  if (state.showCustomAssignment) {
+    renderCustomAssignModal();
+  } else {
+    const el = document.getElementById('custom-assign-modal-root');
+    if (el) el.innerHTML = '';
+  }
+}
+
+function renderCustomAssignModal() {
+  let root = document.getElementById('custom-assign-modal-root');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'custom-assign-modal-root';
+    document.body.appendChild(root);
+  }
+  
+  root.innerHTML = `
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in" onclick="if(event.target===this) closeCustomAssignment()">
+      <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-md flex flex-col gap-4 border border-slate-200">
+        <div class="flex items-center justify-between">
+          <h3 class="font-extrabold text-slate-800 text-lg flex items-center gap-2"><i data-lucide="pen-tool" class="w-5 h-5 text-indigo-600"></i> オンデマンド以外の課題を追加</h3>
+          <button onclick="closeCustomAssignment()" class="text-slate-400 hover:text-slate-600 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        
+        <div class="flex flex-col gap-3 mt-2">
+           <div>
+             <label class="block text-xs font-bold text-slate-600 mb-1">科目名 (必須)</label>
+             <input type="text" value="${state.customAssignInput.courseName}" oninput="state.customAssignInput.courseName=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="例: 英語ライティング" />
+           </div>
+           <div class="flex gap-2">
+             <div class="flex-1">
+               <label class="block text-xs font-bold text-slate-600 mb-1">期限の日付 (必須)</label>
+               <input type="date" value="${state.customAssignInput.dateStr}" oninput="state.customAssignInput.dateStr=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+             </div>
+             <div class="w-24">
+               <label class="block text-xs font-bold text-slate-600 mb-1">時間</label>
+               <button type="button" onclick="openCustomTimePicker('${state.customAssignInput.timeStr}', 'setCustomAssignTime')" class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none hover:bg-slate-50 transition-colors text-center text-slate-700">${state.customAssignInput.timeStr || '23:59'}</button>
+             </div>
+           </div>
+           <div>
+             <label class="flex items-center gap-2 text-sm cursor-pointer border border-slate-200 bg-slate-50 p-2 rounded-lg font-medium text-slate-700 w-max">
+                <input type="checkbox" onchange="state.customAssignInput.isSelfDeadline=this.checked" ${state.customAssignInput.isSelfDeadline?'checked':''} class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"/> 
+                自主的な目標期限として登録する
+             </label>
+           </div>
+           <div>
+             <label class="block text-xs font-bold text-slate-600 mb-1">詳細説明</label>
+             <textarea oninput="state.customAssignInput.description=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none h-20" placeholder="提出方法や課題の詳細など...">${state.customAssignInput.description}</textarea>
+           </div>
+        </div>
+        
+        <div class="flex gap-2 mt-4">
+           <button onclick="closeCustomAssignment()" class="flex-1 py-2.5 bg-slate-100 font-bold text-slate-700 rounded-xl hover:bg-slate-200 transition-colors text-sm">キャンセル</button>
+           <button onclick="saveCustomAssignment()" class="flex-1 py-2.5 bg-indigo-600 font-bold text-white rounded-xl hover:bg-indigo-700 transition-colors flex items-center justify-center gap-1.5 text-sm">追加する</button>
+        </div>
+      </div>
+    </div>
+  `;
+  if (window.lucide) lucide.createIcons({root});
+}
+
+function setCustomAssignTime(v) {
+  state.customAssignInput.timeStr = v;
+  renderCustomAssignModal();
 }
 
 function renderNav() {
@@ -628,6 +551,7 @@ function renderNav() {
   const desktopNav = document.getElementById('desktop-nav');
 
   const tabs = [
+    { id: 'home', label: 'ホーム', icon: 'home' },
     { id: 'tasks', label: 'タスク', icon: 'clock' },
     { id: 'courses', label: '科目管理', icon: 'book-open' },
     { id: 'settings', label: '設定', icon: 'settings' }
@@ -655,7 +579,7 @@ function renderNav() {
         return `
         <button onclick="setActiveTab('${t.id}')" class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm text-left ${classes}">
           <i data-lucide="${t.icon}" class="w-5 h-5"></i>
-          ${t.id === 'tasks' ? 'タスク (Home)' : t.id === 'courses' ? '科目管理' : '設定とデータ'}
+          ${t.id === 'home' ? 'ホーム' : t.id === 'tasks' ? 'タスク' : t.id === 'courses' ? '科目管理' : '設定とデータ'}
         </button>
         `;
       }).join('')}
@@ -663,11 +587,177 @@ function renderNav() {
   `;
 }
 
+function removeWidget(id) {
+  state.widgets = state.widgets.filter(w => w !== id);
+  saveData();
+  render();
+}
+
+function addWidget(id) {
+  if (!state.widgets.includes(id)) {
+    state.widgets.push(id);
+    saveData();
+    render();
+  }
+}
+
+function renderHomeTab() {
+  const now = new Date();
+  const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const in3DaysTs = todayTs + (3 * 24 * 60 * 60 * 1000); // Start of 3rd day from today (meaning up to 11:59PM of 3rd day, so actually we check if ts <= in3DaysTs)
+
+  // Types: watch, assignment within 3 days
+  const upcomingDeadlines = state.tasks.filter(t => {
+    if (t.completed || t.type === 'delivery') return false;
+    const ts = new Date(t.date).getTime();
+    return ts >= (now.getTime() - 24*60*60*1000) && ts <= (in3DaysTs + 24*60*60*1000 - 1); // allow past 24h overdue & up to end of 3rd day
+  }).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  // Recent schedule (delivery events within next 7 days)
+  const next7DaysTs = todayTs + (7 * 24 * 60 * 60 * 1000);
+  const upcomingSchedule = state.tasks.filter(t => {
+    if (t.type !== 'delivery') return false;
+    const ts = new Date(t.date).getTime();
+    return ts >= todayTs && ts <= next7DaysTs;
+  }).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).slice(0, 5); // limit to 5
+
+  const generateTaskHtml = (tasks, emptyMsg) => {
+    if (tasks.length === 0) {
+      return `<div class="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-lg border border-slate-100">${emptyMsg}</div>`;
+    }
+    return `<div class="flex flex-col border border-slate-200 rounded-lg divide-y divide-slate-100 bg-white">` + tasks.map(task => {
+      const course = state.courses.find(c => c.id === task.courseId) || (task.courseId === 'custom' ? { name: 'オンデマンド以外' } : { name: '不明な科目' });
+      const badgeColor = task.type === 'assignment' ? "bg-red-100 text-red-700" :
+                         task.type === 'watch' ? "bg-amber-100 text-amber-700" :
+                         "bg-blue-100 text-blue-700";
+      
+      const isPast = new Date(task.date).getTime() < now.getTime() && task.type !== 'delivery';
+
+      return `
+        <div class="flex p-3 gap-3 items-center group relative overflow-hidden">
+          ${isPast ? '<div class="absolute inset-y-0 left-0 w-1 bg-red-400"></div>' : ''}
+          <div class="flex-1 flex flex-col gap-1 w-full min-w-0">
+             <div class="flex items-center gap-2 text-xs">
+                <span class="font-bold truncate text-slate-700">${course.name}</span>
+                <span class="text-slate-400 border-l border-slate-200 pl-2 whitespace-nowrap">${task.lectureName}</span>
+             </div>
+             <div class="flex items-center gap-2 text-xs font-bold tabular-nums ${isPast ? 'text-red-500' : 'text-slate-600'}">
+                <span class="${badgeColor} px-1.5 py-0.5 rounded-sm shrink-0 whitespace-nowrap">${typeLabels[task.type]}</span>
+                <i data-lucide="clock" class="w-3.5 h-3.5 opacity-70"></i>
+                ${formatTaskDate(task.date)} ${task.type !== 'delivery' && !task.date.includes('T00:00:00') ? formatTaskTimeOnly(task.date) : ''}
+                ${isPast ? '<span class="text-[10px] bg-red-50 text-red-600 px-1 rounded uppercase tracking-wider ml-1">overdue</span>' : ''}
+             </div>
+          </div>
+        </div>
+      `;
+    }).join('') + `</div>`;
+  };
+
+  const widgetDefs = {
+    deadlines: {
+      id: 'deadlines',
+      title: '3日以内の期限',
+      icon: 'alert-circle',
+      iconColor: 'text-red-500',
+      html: generateTaskHtml(upcomingDeadlines, "直近の期限はありません。よくやりました！")
+    },
+    schedule: {
+      id: 'schedule',
+      title: '直近1週間の配信予定',
+      icon: 'calendar',
+      iconColor: 'text-blue-500',
+      html: generateTaskHtml(upcomingSchedule, "直近の配信予定はありません。")
+    },
+    completed: {
+      id: 'completed',
+      title: '最近完了したタスク',
+      icon: 'check-circle-2',
+      iconColor: 'text-emerald-500',
+      html: () => {
+        const recentlyCompleted = state.tasks.filter(t => t.completed).sort((a,b) => b.updatedAt - a.updatedAt).slice(0, 5);
+        if (recentlyCompleted.length === 0) return `<div class="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-lg border border-slate-100">まだ完了したタスクがありません。</div>`;
+        return `<div class="flex flex-col border border-slate-200 rounded-lg divide-y divide-slate-100 bg-white opacity-70">` + recentlyCompleted.map(task => {
+           const course = state.courses.find(c => c.id === task.courseId) || (task.courseId === 'custom' ? { name: 'オンデマンド以外' } : { name: '不明な科目' });
+           return `
+             <div class="flex p-3 gap-3 items-center group relative overflow-hidden">
+                <i data-lucide="check" class="w-5 h-5 text-emerald-500 mx-1"></i>
+                <div class="flex-1 flex flex-col w-full min-w-0 line-through text-slate-500">
+                   <div class="text-xs font-bold truncate">${course.name} <span class="font-normal text-slate-400">/ ${task.lectureName}</span></div>
+                   <div class="text-[10px] mt-0.5">${typeLabels[task.type] || task.type}</div>
+                </div>
+             </div>`;
+        }).join('') + `</div>`;
+      }
+    },
+    memo: {
+      id: 'memo',
+      title: 'メモ帳',
+      icon: 'sticky-note',
+      iconColor: 'text-amber-500',
+      html: `<textarea oninput="state.memoContent=this.value; saveData()" class="w-full border border-amber-200 bg-amber-50/30 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500 resize-none h-32" placeholder="自由にメモを書き込めます...">${state.memoContent || ''}</textarea>`
+    }
+  };
+
+  const activeWidgetsHtml = state.widgets.map(wId => {
+    const w = widgetDefs[wId];
+    if (!w) return '';
+    const content = typeof w.html === 'function' ? w.html() : w.html;
+    return `
+      <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200/60 flex flex-col gap-3 relative group">
+         <div class="flex justify-between items-center">
+           <h3 class="font-bold text-slate-800 flex items-center gap-2 text-sm">
+             <i data-lucide="${w.icon}" class="w-4 h-4 ${w.iconColor}"></i>
+             ${w.title}
+           </h3>
+           <button onclick="removeWidget('${w.id}')" class="opacity-0 group-hover:opacity-100 text-slate-300 hover:bg-red-50 hover:text-red-500 p-1.5 rounded-lg transition-all" aria-label="ウィジェット削除">
+             <i data-lucide="x" class="w-4 h-4"></i>
+           </button>
+         </div>
+         ${content}
+      </div>
+    `;
+  }).join('');
+
+  const inactiveWidgets = Object.values(widgetDefs).filter(w => !state.widgets.includes(w.id));
+  const addWidgetBtnHtml = inactiveWidgets.length > 0 ? `
+    <div class="relative inline-block w-full text-left" id="add-widget-dropdown">
+       <button onclick="document.getElementById('widget-menu').classList.toggle('hidden')" class="border border-slate-200 border-dashed text-slate-500 hover:text-blue-600 hover:bg-slate-50 hover:border-blue-300 font-medium py-3 px-4 rounded-xl w-full text-sm transition-all flex items-center justify-center gap-1.5">
+         <i data-lucide="plus-circle" class="w-4 h-4"></i> ウィジェットを追加
+       </button>
+       <div id="widget-menu" class="hidden absolute left-0 right-0 z-10 mt-2 bg-white border border-slate-200 rounded-xl shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden origin-top animate-in zoom-in-95">
+         <div class="py-1">
+           ${inactiveWidgets.map(w => `
+             <button onclick="addWidget('${w.id}')" class="flex items-center w-full px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors gap-3 border-b border-slate-100 last:border-0">
+               <div class="bg-slate-100 p-1.5 rounded"><i data-lucide="${w.icon}" class="w-4 h-4 ${w.iconColor}"></i></div>
+               <div class="font-bold text-left">${w.title}を追加</div>
+             </button>
+           `).join('')}
+         </div>
+       </div>
+    </div>
+  ` : '';
+
+  return `
+    <div class="flex flex-col gap-6 animate-in fade-in pb-8">
+      <div class="flex flex-col gap-1">
+        <h2 class="text-2xl font-black text-slate-800 tracking-tight">ホーム</h2>
+        <p class="text-sm text-slate-500 font-medium tracking-wide">本日のステータスと直近の予定</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+        ${activeWidgetsHtml}
+        ${addWidgetBtnHtml}
+      </div>
+    </div>
+  `;
+}
+
 function renderTasksTab() {
   const switchHtml = `
-    <div class="flex items-center gap-2 mb-2 bg-slate-100 p-1 rounded-lg w-max ml-auto shadow-inner border border-slate-200/60">
-      <button onclick="state.taskSortMode='course'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all ${state.taskSortMode === 'course' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">科目別</button>
-      <button onclick="state.taskSortMode='date'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all ${state.taskSortMode === 'date' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">日付順</button>
+    <div class="flex items-center gap-2 mb-2 bg-slate-100 p-1 rounded-lg w-max ml-auto shadow-inner border border-slate-200/60 overflow-x-auto w-full justify-between sm:justify-end">
+      <button onclick="state.taskSortMode='today'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap min-w-16 ${state.taskSortMode === 'today' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">今日</button>
+      <button onclick="state.taskSortMode='course'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap min-w-16 ${state.taskSortMode === 'course' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">科目別</button>
+      <button onclick="state.taskSortMode='date'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap min-w-16 ${state.taskSortMode === 'date' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">すべて</button>
     </div>
   `;
 
@@ -763,7 +853,8 @@ function renderTasksTab() {
                     <div class="flex flex-col gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg -ml-1.5 transition-colors my-1">
                       <div class="flex flex-wrap gap-2 items-center">
                          <select id="edit-course-input" onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
-                           ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
+                            ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
+                            <option value="custom" ${state.editTaskData.courseId==='custom'?'selected':''}>オンデマンド以外</option>
                          </select>
                          <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
                          <select id="edit-type-input" onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
@@ -810,14 +901,22 @@ function renderTasksTab() {
       </div>
     `).join('');
   } else {
-    // taskSortMode === 'date'
+    // taskSortMode === 'date' or 'today'
     const dateMap = {};
+    const todayTs = new Date().setHours(0,0,0,0);
+    
     state.tasks.forEach(task => {
       const d = new Date(task.date);
       const groupKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      const ts = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      
+      if (state.taskSortMode === 'today' && ts !== todayTs) {
+         return; // Skip if not today when 'today' mode selected
+      }
+
       if (!dateMap[groupKey]) {
         dateMap[groupKey] = {
-           ts: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(),
+           ts: ts,
            tasks: []
         };
       }
@@ -827,102 +926,113 @@ function renderTasksTab() {
     const groups = Object.values(dateMap);
     groups.sort((a,b) => a.ts - b.ts);
 
-    contentHtml = groups.map(g => {
-      const d = new Date(g.ts);
-      const m = d.getMonth() + 1;
-      const day = d.getDate();
-      const w = ['日','月','火','水','木','金','土'][d.getDay()];
-      const headerStr = `${m}月${day}日 (${w})`;
-      
-      const nowTs = new Date().setHours(0,0,0,0);
-      const isPast = g.ts < nowTs;
-      const isToday = g.ts === nowTs;
-      const headerColors = isPast ? 'text-slate-600 bg-slate-100 border-slate-200 opacity-80' : isToday ? 'text-blue-800 bg-blue-100 border-blue-200 shadow-sm' : 'text-slate-700 bg-slate-50 border-slate-200';
+    if (groups.length === 0 && state.taskSortMode === 'today') {
+        contentHtml = `
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center text-slate-500">
+               <i data-lucide="coffee" class="w-10 h-10 text-slate-300 mx-auto mb-3"></i>
+               今日のタスクはありません。
+            </div>
+        `;
+    } else {
+      contentHtml = groups.map(g => {
+        const d = new Date(g.ts);
+        const m = d.getMonth() + 1;
+        const day = d.getDate();
+        const w = ['日','月','火','水','木','金','土'][d.getDay()];
+        const headerStr = `${m}月${day}日 (${w})`;
+        
+        const nowTs = new Date().setHours(0,0,0,0);
+        const isPast = g.ts < nowTs;
+        const isToday = g.ts === nowTs;
+        const headerColors = isPast ? 'text-slate-600 bg-slate-100 border-slate-200 opacity-80' : isToday ? 'text-blue-800 bg-blue-100 border-blue-200 shadow-sm' : 'text-slate-700 bg-slate-50 border-slate-200';
 
-      g.tasks.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        g.tasks.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-      return `
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-4 last:mb-0">
-           <div class="${headerColors} border-b px-4 py-2 font-bold text-sm tracking-wide">
-             ${headerStr} ${isToday ? '<span class="ml-2 text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider">Today</span>' : ''}
-           </div>
-           <div class="flex flex-col divide-y divide-slate-100">
-             ${g.tasks.map(task => {
-                const course = state.courses.find(c => c.id === task.courseId) || { name: '不明な科目' };
-                const isOverdue = !task.completed && task.type !== 'delivery' && isPastButNotToday(task.date);
-                const isTodayTask = !task.completed && task.type !== 'delivery' && isTodayDate(task.date);
-                
-                let checkBtn = '';
-                if (task.type !== 'delivery') {
-                  const checkColor = task.completed ? "text-slate-400" : isOverdue ? "text-red-500 hover:text-red-600" : "text-blue-600 hover:text-blue-700";
-                  const icon = task.completed ? "check-circle" : "circle";
-                  checkBtn = `<button onclick="toggleTaskCompletion('${task.id}')" class="transition-colors ${checkColor}"><i data-lucide="${icon}" class="w-5 h-5"></i></button>`;
-                } else {
-                  checkBtn = `<div class="w-2 h-2 rounded-full bg-slate-300"></div>`;
-                }
+        return `
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-4 last:mb-0">
+             <div class="${headerColors} border-b px-4 py-2 font-bold text-sm tracking-wide flex items-center justify-between">
+               <div>${headerStr} ${isToday ? '<span class="ml-2 text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider">Today</span>' : ''}</div>
+             </div>
+             <div class="flex flex-col divide-y divide-slate-100">
+               ${g.tasks.map(task => {
+                  const course = state.courses.find(c => c.id === task.courseId) || (task.courseId === 'custom' ? { name: 'オンデマンド以外' } : { name: '不明な科目' });
+                  const isOverdue = !task.completed && task.type !== 'delivery' && isPastButNotToday(task.date);
+                  const isTodayTask = !task.completed && task.type !== 'delivery' && isTodayDate(task.date);
+                  
+                  let checkBtn = '';
+                  if (task.type !== 'delivery') {
+                    const checkColor = task.completed ? "text-slate-400" : isOverdue ? "text-red-500 hover:text-red-600" : "text-blue-600 hover:text-blue-700";
+                    const icon = task.completed ? "check-circle" : "circle";
+                    checkBtn = `<button onclick="toggleTaskCompletion('${task.id}')" class="transition-colors ${checkColor}"><i data-lucide="${icon}" class="w-5 h-5"></i></button>`;
+                  } else {
+                    checkBtn = `<div class="w-2 h-2 rounded-full bg-slate-300"></div>`;
+                  }
 
-                const badgeColors = task.type === 'assignment' ? "bg-red-100 text-red-700 border border-red-200" :
-                                   task.type === 'watch' ? "bg-amber-100 text-amber-700 border border-amber-200" :
-                                   "bg-slate-100 text-slate-700 border border-slate-200";
+                  const badgeColors = task.type === 'assignment' ? "bg-red-100 text-red-700 border border-red-200" :
+                                     task.type === 'watch' ? "bg-amber-100 text-amber-700 border border-amber-200" :
+                                     "bg-slate-100 text-slate-700 border border-slate-200";
 
-                const dateColor = isOverdue && !task.completed ? "text-red-600" :
-                                  isTodayTask ? "text-amber-600" : "text-slate-700";
+                  const dateColor = isOverdue && !task.completed ? "text-red-600" :
+                                    isTodayTask ? "text-amber-600" : "text-slate-700";
 
-                if (state.editingTaskId === task.id) {
-                    return `
-                    <div class="flex flex-col gap-2 p-3 bg-blue-50 border border-blue-100 transition-colors">
-                      <div class="flex flex-wrap gap-2 items-center">
-                         <select id="edit-course-input" onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
-                           ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
-                         </select>
-                         <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
-                         <select id="edit-type-input" onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
-                           <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
-                           <option value="watch" ${state.editTaskData.type==='watch'?'selected':''}>視聴期限</option>
-                           <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
-                         </select>
-                         <input type="date" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
-                         <button type="button" onclick="openCustomTimePicker('${state.editTaskData.timeStr}', 'setEditTaskTime')" class="bg-white border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[70px] text-center whitespace-nowrap overflow-hidden">${state.editTaskData.timeStr || '00:00'}</button>
-                         <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" onchange="state.editTaskData.isSelfDeadline=this.checked" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
+                  if (state.editingTaskId === task.id) {
+                      return `
+                      <div class="flex flex-col gap-2 p-3 bg-blue-50 border border-blue-100 transition-colors">
+                        <div class="flex flex-wrap gap-2 items-center">
+                           <select id="edit-course-input" onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
+                             ${state.courses.map(c => `<option value="${c.id}" ${state.editTaskData.courseId===c.id?'selected':''}>${c.name}</option>`).join('')}
+                             <option value="custom" ${state.editTaskData.courseId==='custom'?'selected':''}>オンデマンド以外</option>
+                           </select>
+                           <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
+                           <select id="edit-type-input" onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
+                             <option value="delivery" ${state.editTaskData.type==='delivery'?'selected':''}>配信日</option>
+                             <option value="watch" ${state.editTaskData.type==='watch'?'selected':''}>視聴期限</option>
+                             <option value="assignment" ${state.editTaskData.type==='assignment'?'selected':''}>課題提出</option>
+                           </select>
+                           <input type="date" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
+                           <button type="button" onclick="openCustomTimePicker('${state.editTaskData.timeStr}', 'setEditTaskTime')" class="bg-white border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[70px] text-center whitespace-nowrap overflow-hidden">${state.editTaskData.timeStr || '00:00'}</button>
+                           <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" onchange="state.editTaskData.isSelfDeadline=this.checked" ${state.editTaskData.isSelfDeadline?'checked':''} /> 自主期限</label>
+                        </div>
+                        <div class="flex justify-end gap-2 mt-1">
+                           <button onclick="cancelEditTask()" class="text-sm bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded font-bold text-slate-700 transition">キャンセル</button>
+                           <button onclick="saveEditTask()" class="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded font-bold text-white transition">保存</button>
+                        </div>
                       </div>
-                      <div class="flex justify-end gap-2 mt-1">
-                         <button onclick="cancelEditTask()" class="text-sm bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded font-bold text-slate-700 transition">キャンセル</button>
-                         <button onclick="saveEditTask()" class="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded font-bold text-white transition">保存</button>
-                      </div>
-                    </div>
-                    `;
-                }
+                      `;
+                  }
 
-                return `
-                <div class="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors group/task">
-                  <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
-                  <div class="flex-1 flex flex-col gap-1 ${task.completed ? 'opacity-50 line-through' : ''}">
-                    <div class="flex flex-wrap items-center gap-2 text-sm">
-                      <span class="font-bold text-slate-700 text-xs truncate max-w-[150px]" title="${course.name}">${course.name}</span>
-                      <span class="text-slate-500 text-xs border-l border-slate-300 pl-2">${task.lectureName}</span>
-                      <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
-                      ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ''}
+                  return `
+                  <div class="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors group/task">
+                    <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
+                    <div class="flex-1 flex flex-col gap-1 ${task.completed ? 'opacity-50 line-through' : ''}">
+                      <div class="flex flex-wrap items-center gap-2 text-sm">
+                        <span class="font-bold text-slate-700 text-xs truncate max-w-[150px]" title="${course.name}">${course.name}</span>
+                        <span class="text-slate-500 text-xs border-l border-slate-300 pl-2">${task.lectureName}</span>
+                        <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
+                        ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ''}
+                      </div>
+                      <div class="text-xs font-bold tabular-nums flex items-center gap-1.5 ${dateColor}">
+                        <i data-lucide="clock" class="w-3.5 h-3.5"></i>
+                        ${task.date.includes('T00:00:00') && task.type === 'delivery' ? '時間未定' : formatTaskTimeOnly(task.date)}
+                      </div>
+                      ${task.description ? `<p class="text-xs text-slate-500 mt-0.5 truncate whitespace-normal break-words">${task.description.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>` : ''}
                     </div>
-                    <div class="text-xs font-bold tabular-nums flex items-center gap-1.5 ${dateColor}">
-                      <i data-lucide="clock" class="w-3.5 h-3.5"></i>
-                      ${task.date.includes('T00:00:00') && task.type === 'delivery' ? '時間未定' : formatTaskTimeOnly(task.date)}
+                    <div class="flex flex-col sm:flex-row items-center gap-1 opacity-100 shrink-0">
+                      <button onclick="startEditTask('${task.id}')" class="text-slate-300 hover:text-blue-500 p-1.5 hover:bg-blue-50 rounded" title="タスク編集">
+                        <i data-lucide="edit-2" class="w-4 h-4"></i>
+                      </button>
+                      <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded" title="タスク削除">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                      </button>
                     </div>
                   </div>
-                  <div class="flex flex-col sm:flex-row items-center gap-1 opacity-100 shrink-0">
-                    <button onclick="startEditTask('${task.id}')" class="text-slate-300 hover:text-blue-500 p-1.5 hover:bg-blue-50 rounded" title="タスク編集">
-                      <i data-lucide="edit-2" class="w-4 h-4"></i>
-                    </button>
-                    <button onclick="deleteTask('${task.id}')" class="text-slate-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded" title="タスク削除">
-                      <i data-lucide="x" class="w-4 h-4"></i>
-                    </button>
-                  </div>
-                </div>
-                `;
-             }).join('')}
-           </div>
-        </div>
-      `;
-    }).join('');
+                  `;
+               }).join('')}
+             </div>
+          </div>
+        `;
+      }).join('');
+    }
   }
 
   return `
@@ -1032,8 +1142,55 @@ function renderCoursesTab() {
       <div class="grid grid-cols-1 gap-4">
         ${listHtml}
       </div>
+
+      <div class="mt-4 pt-4 border-t border-slate-200">
+         <button onclick="openCustomAssignment()" class="bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 font-bold py-3 px-4 rounded-xl w-full text-sm transition-all flex items-center justify-center gap-2 shadow-sm">
+           <i data-lucide="pen-tool" class="w-4 h-4"></i> オンデマンド以外の課題を追加する
+         </button>
+      </div>
     </div>
   `;
+}
+
+function openCustomAssignment() {
+  state.showCustomAssignment = true;
+  state.customAssignInput = {
+    courseName: '',
+    dateStr: '',
+    timeStr: '23:59',
+    isSelfDeadline: false,
+    description: ''
+  };
+  render();
+}
+
+function closeCustomAssignment() {
+  state.showCustomAssignment = false;
+  render();
+}
+
+function saveCustomAssignment() {
+  const { courseName, dateStr, timeStr, isSelfDeadline, description } = state.customAssignInput;
+  if (!courseName.trim() || !dateStr) {
+    showToast("科目名と期限の日付は必須です", "error");
+    return;
+  }
+  
+  state.tasks.push({
+    id: generateId(),
+    courseId: 'custom',
+    lectureName: courseName.trim(), // Storing custom course name in lectureName
+    type: 'assignment',
+    date: `${dateStr}T${timeStr || '23:59'}:00`,
+    isSelfDeadline: isSelfDeadline,
+    description: description.trim(),
+    completed: false,
+    updatedAt: Date.now()
+  });
+  
+  saveData();
+  closeCustomAssignment();
+  showToast("課題を追加しました");
 }
 
 function saveCourseEdit(id) {
@@ -1063,42 +1220,25 @@ function renderSettingsTab() {
         <ol class="list-decimal list-inside text-sm text-indigo-900 leading-relaxed space-y-2 mb-2">
           <li><strong>科目を登録する：</strong>「科目管理」タブから授業を追加し、「スケジュールを追加」から日程を一括登録します。</li>
           <li><strong>タスクの管理：</strong>「タスク」タブで、配信日・視聴期限・課題提出の予定を確認し、完了したものはチェックをつけます。</li>
-          <li><strong>カレンダーへ同期する (ics形式):</strong> 予定の通知を受け取るために「icsファイルをエクスポート」し、Google Calendar や Apple カレンダー等にインポートしてください。</li>
-          <li><strong>データのバックアップ・復元 (json形式):</strong> 他の端末やブラウザにデータを移行したい場合は、「jsonファイルをエクスポート」し、新しい環境で「jsonファイルをインポート」してください。</li>
+          <li><strong>データのバックアップ・復元:</strong> 他の端末やブラウザにデータを移行したい場合は、「jsonデータをエクスポート」し、新しい環境で「jsonデータのインポート」を行ってください。</li>
         </ol>
       </div>
 
       <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-4">
         <div>
           <h3 class="font-bold text-slate-700 text-sm mb-2 flex items-center gap-2">
-             <i data-lucide="calendar" class="w-4 h-4"></i> カレンダー連携 / データバックアップ
+             <i data-lucide="database" class="w-4 h-4"></i> データのバックアップ・復元
           </h3>
-          <div class="text-sm text-slate-600 mb-3 leading-relaxed">
-             カレンダーに取り込むための「ics」と、データ復元用の「json」を出力できます。<br/>
+          <div class="text-sm text-slate-600 mb-4 leading-relaxed">
+             データの復元や機種変更時の移行に使うためのJSONファイルをダウンロードできます。<br/>
              <span class="text-xs text-slate-400">※ボタンが機能しない場合は、アプリを「新しいタブで開く」からお試しください。</span>
           </div>
 
-          <div class="mb-4">
-            <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer p-2 bg-slate-50 rounded border border-slate-200">
-              <input type="checkbox" id="exportOnlyModified" class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500">
-              <span>前回エクスポート時から<strong>追加・変更された予定のみ出力</strong>する (ics出力時のみ有効)</span>
-            </label>
-          </div>
-
-           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button onclick="exportData()" class="bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              <i data-lucide="download" class="w-4 h-4"></i> icsデータをエクスポート
-            </button>
-            <button onclick="exportDataJson()" class="bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+          <div class="flex flex-col sm:flex-row gap-3">
+            <button onclick="exportData()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-medium py-3 px-4 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
               <i data-lucide="download" class="w-4 h-4"></i> jsonデータをエクスポート
             </button>
-          </div>
-          
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-            <button onclick="openCombinedImportModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-              <i data-lucide="upload" class="w-4 h-4"></i> icsデータのインポート
-            </button>
-            <button onclick="openCombinedImportModal()" class="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+            <button onclick="openCombinedImportModal()" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-3 px-4 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
               <i data-lucide="upload" class="w-4 h-4"></i> jsonデータのインポート
             </button>
           </div>
