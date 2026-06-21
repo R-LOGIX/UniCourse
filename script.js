@@ -743,7 +743,7 @@ function renderHomeTab() {
           const course =
             state.courses.find((c) => c.id === task.courseId) ||
             (task.courseId === "custom"
-              ? { name: "オンデマンド以外" }
+              ? { name: task.lectureName, isCustom: true }
               : { name: "不明な科目" });
           const badgeColor =
             task.type === "assignment"
@@ -763,7 +763,7 @@ function renderHomeTab() {
           <div class="flex-1 flex flex-col gap-1 w-full min-w-0">
              <div class="flex items-center gap-2 text-xs">
                 <span class="font-bold truncate text-slate-700">${course.name}</span>
-                <span class="text-slate-400 border-l border-slate-200 pl-2 whitespace-nowrap">${task.lectureName}</span>
+                ${course.isCustom ? "" : `<span class="text-slate-400 border-l border-slate-200 pl-2 whitespace-nowrap">${task.lectureName}</span>`}
              </div>
              <div class="flex items-center gap-2 text-xs font-bold tabular-nums ${isPast ? "text-red-500" : "text-slate-600"}">
                 <span class="${badgeColor} px-1.5 py-0.5 rounded-sm shrink-0 whitespace-nowrap">${typeLabels[task.type]}</span>
@@ -822,13 +822,13 @@ function renderHomeTab() {
               const course =
                 state.courses.find((c) => c.id === task.courseId) ||
                 (task.courseId === "custom"
-                  ? { name: "オンデマンド以外" }
+                  ? { name: task.lectureName, isCustom: true }
                   : { name: "不明な科目" });
               return `
              <div class="flex p-3 gap-3 items-center group relative overflow-hidden">
                 <i data-lucide="check" class="w-5 h-5 text-emerald-500 mx-1"></i>
                 <div class="flex-1 flex flex-col w-full min-w-0 line-through text-slate-500">
-                   <div class="text-xs font-bold truncate">${course.name} <span class="font-normal text-slate-400">/ ${task.lectureName}</span></div>
+                   <div class="text-xs font-bold truncate">${course.name} ${course.isCustom ? "" : `<span class="font-normal text-slate-400">/ ${task.lectureName}</span>`}</div>
                    <div class="text-[10px] mt-0.5">${typeLabels[task.type] || task.type}</div>
                 </div>
              </div>`;
@@ -938,13 +938,29 @@ function renderTasksTab() {
   let contentHtml = "";
 
   if (state.taskSortMode === "course") {
-    const grouped = state.courses
+    const baseCourses = [...state.courses];
+    const customTasks = state.tasks.filter((t) => t.courseId === "custom");
+    const customNames = [...new Set(customTasks.map((t) => t.lectureName))];
+    customNames.forEach((cName) => {
+      baseCourses.push({
+        id: "custom",
+        name: cName,
+        isCustom: true,
+      });
+    });
+
+    const grouped = baseCourses
       .map((course) => {
-        const courseTasks = state.tasks.filter((t) => t.courseId === course.id);
+        const courseTasks = state.tasks.filter((t) => {
+          if (course.isCustom)
+            return t.courseId === "custom" && t.lectureName === course.name;
+          return t.courseId === course.id;
+        });
         const map = {};
         courseTasks.forEach((t) => {
-          if (!map[t.lectureName]) map[t.lectureName] = [];
-          map[t.lectureName].push(t);
+          const lecName = course.isCustom ? "登録課題" : t.lectureName;
+          if (!map[lecName]) map[lecName] = [];
+          map[lecName].push(t);
         });
         const lectures = Object.entries(map).map(([name, tasks]) => {
           const order = { delivery: 0, watch: 1, assignment: 2 };
@@ -977,7 +993,9 @@ function renderTasksTab() {
           ${lectures
             .map((lec) => {
               let editLecHtml = "";
-              if (
+              if (course.isCustom) {
+                editLecHtml = `<h4 class="font-bold text-slate-700 text-sm ml-1 flex items-center gap-2 group">${lec.name}</h4>`;
+              } else if (
                 state.editingLecture &&
                 state.editingLecture.courseId === course.id &&
                 state.editingLecture.oldName === lec.name
@@ -1150,7 +1168,7 @@ function renderTasksTab() {
                  const course =
                    state.courses.find((c) => c.id === task.courseId) ||
                    (task.courseId === "custom"
-                     ? { name: "オンデマンド以外" }
+                     ? { name: task.lectureName, isCustom: true }
                      : { name: "不明な科目" });
                  const isOverdue =
                    !task.completed &&
@@ -1220,7 +1238,7 @@ function renderTasksTab() {
                     <div class="flex-1 flex flex-col gap-1 ${task.completed ? "opacity-50 line-through" : ""}">
                       <div class="flex flex-wrap items-center gap-2 text-sm">
                         <span class="font-bold text-slate-700 text-xs truncate max-w-[150px]" title="${course.name}">${course.name}</span>
-                        <span class="text-slate-500 text-xs border-l border-slate-300 pl-2">${task.lectureName}</span>
+                        ${course.isCustom ? "" : `<span class="text-slate-500 text-xs border-l border-slate-300 pl-2">${task.lectureName}</span>`}
                         <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
                         ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ""}
                       </div>
