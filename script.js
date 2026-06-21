@@ -187,7 +187,12 @@ function saveData() {
 }
 
 // Actions
+let shouldScrollToToday = false;
+
 function setActiveTab(tab) {
+  if (tab === 'tasks' && state.activeTab !== 'tasks') {
+     shouldScrollToToday = true;
+  }
   state.activeTab = tab;
   render();
 }
@@ -218,17 +223,22 @@ function deleteCourse(id) {
 function toggleTaskCompletion(id) {
   const task = state.tasks.find(t => t.id === id);
   if (task) {
-    task.completed = !task.completed;
-    task.updatedAt = Date.now();
-    saveData();
-    render();
+    const actionText = task.completed ? 'タスクを未完了に戻しますか？' : 'このタスクを完了にしますか？';
+    confirmAction(actionText, () => {
+      task.completed = !task.completed;
+      task.updatedAt = Date.now();
+      saveData();
+      render();
+    });
   }
 }
 
 function deleteTask(id) {
-  state.tasks = state.tasks.filter(t => t.id !== id);
-  saveData();
-  render();
+  confirmAction('このタスクを削除しますか？', () => {
+    state.tasks = state.tasks.filter(t => t.id !== id);
+    saveData();
+    render();
+  });
 }
 
 async function exportData() {
@@ -486,6 +496,17 @@ function render() {
     const el = document.getElementById('custom-assign-modal-root');
     if (el) el.innerHTML = '';
   }
+
+  // Scroll to today if needed
+  if (shouldScrollToToday && state.activeTab === 'tasks' && state.taskSortMode === 'date') {
+    shouldScrollToToday = false;
+    requestAnimationFrame(() => {
+      const todayEl = document.getElementById('today-group');
+      if (todayEl) {
+        todayEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }
 }
 
 function renderCustomAssignModal() {
@@ -588,9 +609,11 @@ function renderNav() {
 }
 
 function removeWidget(id) {
-  state.widgets = state.widgets.filter(w => w !== id);
-  saveData();
-  render();
+  confirmAction('このウィジェットを非表示にしますか？', () => {
+    state.widgets = state.widgets.filter(w => w !== id);
+    saveData();
+    render();
+  });
 }
 
 function addWidget(id) {
@@ -604,13 +627,13 @@ function addWidget(id) {
 function renderHomeTab() {
   const now = new Date();
   const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const in3DaysTs = todayTs + (3 * 24 * 60 * 60 * 1000); // Start of 3rd day from today (meaning up to 11:59PM of 3rd day, so actually we check if ts <= in3DaysTs)
+  const in7DaysTs = todayTs + (7 * 24 * 60 * 60 * 1000); // 7 days from today
 
-  // Types: watch, assignment within 3 days
+  // Types: watch, assignment within 7 days
   const upcomingDeadlines = state.tasks.filter(t => {
     if (t.completed || t.type === 'delivery') return false;
     const ts = new Date(t.date).getTime();
-    return ts >= (now.getTime() - 24*60*60*1000) && ts <= (in3DaysTs + 24*60*60*1000 - 1); // allow past 24h overdue & up to end of 3rd day
+    return ts >= (now.getTime() - 24*60*60*1000) && ts <= (in7DaysTs + 24*60*60*1000 - 1); 
   }).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   // Recent schedule (delivery events within next 7 days)
@@ -621,7 +644,7 @@ function renderHomeTab() {
     return ts >= todayTs && ts <= next7DaysTs;
   }).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).slice(0, 5); // limit to 5
 
-  const generateTaskHtml = (tasks, emptyMsg) => {
+  const generateTaskHtml = (tasks, emptyMsg, showCheck = false) => {
     if (tasks.length === 0) {
       return `<div class="p-4 text-center text-sm text-slate-500 bg-slate-50 rounded-lg border border-slate-100">${emptyMsg}</div>`;
     }
@@ -636,6 +659,7 @@ function renderHomeTab() {
       return `
         <div class="flex p-3 gap-3 items-center group relative overflow-hidden">
           ${isPast ? '<div class="absolute inset-y-0 left-0 w-1 bg-red-400"></div>' : ''}
+          ${showCheck ? `<button onclick="toggleTaskCompletion('${task.id}')" class="shrink-0 transition-colors ${isPast ? 'text-red-500 hover:text-red-600' : 'text-blue-600 hover:text-blue-700'}"><i data-lucide="circle" class="w-5 h-5"></i></button>` : ''}
           <div class="flex-1 flex flex-col gap-1 w-full min-w-0">
              <div class="flex items-center gap-2 text-xs">
                 <span class="font-bold truncate text-slate-700">${course.name}</span>
@@ -656,17 +680,17 @@ function renderHomeTab() {
   const widgetDefs = {
     deadlines: {
       id: 'deadlines',
-      title: '3日以内の期限',
+      title: '7日以内の期限',
       icon: 'alert-circle',
       iconColor: 'text-red-500',
-      html: generateTaskHtml(upcomingDeadlines, "直近の期限はありません。よくやりました！")
+      html: generateTaskHtml(upcomingDeadlines, "直近の期限はありません。よくやりました！", true)
     },
     schedule: {
       id: 'schedule',
       title: '直近1週間の配信予定',
       icon: 'calendar',
       iconColor: 'text-blue-500',
-      html: generateTaskHtml(upcomingSchedule, "直近の配信予定はありません。")
+      html: generateTaskHtml(upcomingSchedule, "直近の配信予定はありません。", false)
     },
     completed: {
       id: 'completed',
@@ -753,11 +777,12 @@ function renderHomeTab() {
 }
 
 function renderTasksTab() {
+  if (state.taskSortMode === 'today') state.taskSortMode = 'date';
+  
   const switchHtml = `
     <div class="flex items-center gap-2 mb-2 bg-slate-100 p-1 rounded-lg w-max ml-auto shadow-inner border border-slate-200/60 overflow-x-auto w-full justify-between sm:justify-end">
-      <button onclick="state.taskSortMode='today'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap min-w-16 ${state.taskSortMode === 'today' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">今日</button>
       <button onclick="state.taskSortMode='course'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap min-w-16 ${state.taskSortMode === 'course' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">科目別</button>
-      <button onclick="state.taskSortMode='date'; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap min-w-16 ${state.taskSortMode === 'date' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">すべて</button>
+      <button onclick="state.taskSortMode='date'; shouldScrollToToday=true; render()" class="px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap min-w-16 ${state.taskSortMode === 'date' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}">すべて</button>
     </div>
   `;
 
@@ -901,7 +926,7 @@ function renderTasksTab() {
       </div>
     `).join('');
   } else {
-    // taskSortMode === 'date' or 'today'
+    // taskSortMode === 'date'
     const dateMap = {};
     const todayTs = new Date().setHours(0,0,0,0);
     
@@ -910,10 +935,6 @@ function renderTasksTab() {
       const groupKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       const ts = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       
-      if (state.taskSortMode === 'today' && ts !== todayTs) {
-         return; // Skip if not today when 'today' mode selected
-      }
-
       if (!dateMap[groupKey]) {
         dateMap[groupKey] = {
            ts: ts,
@@ -926,35 +947,27 @@ function renderTasksTab() {
     const groups = Object.values(dateMap);
     groups.sort((a,b) => a.ts - b.ts);
 
-    if (groups.length === 0 && state.taskSortMode === 'today') {
-        contentHtml = `
-            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center text-slate-500">
-               <i data-lucide="coffee" class="w-10 h-10 text-slate-300 mx-auto mb-3"></i>
-               今日のタスクはありません。
-            </div>
-        `;
-    } else {
-      contentHtml = groups.map(g => {
-        const d = new Date(g.ts);
-        const m = d.getMonth() + 1;
-        const day = d.getDate();
-        const w = ['日','月','火','水','木','金','土'][d.getDay()];
-        const headerStr = `${m}月${day}日 (${w})`;
-        
-        const nowTs = new Date().setHours(0,0,0,0);
-        const isPast = g.ts < nowTs;
-        const isToday = g.ts === nowTs;
-        const headerColors = isPast ? 'text-slate-600 bg-slate-100 border-slate-200 opacity-80' : isToday ? 'text-blue-800 bg-blue-100 border-blue-200 shadow-sm' : 'text-slate-700 bg-slate-50 border-slate-200';
+    contentHtml = groups.map(g => {
+      const d = new Date(g.ts);
+      const m = d.getMonth() + 1;
+      const day = d.getDate();
+      const w = ['日','月','火','水','木','金','土'][d.getDay()];
+      const headerStr = `${m}月${day}日 (${w})`;
+      
+      const nowTs = new Date().setHours(0,0,0,0);
+      const isPast = g.ts < nowTs;
+      const isToday = g.ts === nowTs;
+      const headerColors = isPast ? 'text-slate-600 bg-slate-100 border-slate-200 opacity-80' : isToday ? 'text-blue-800 bg-blue-100 border-blue-200 shadow-sm' : 'text-slate-700 bg-slate-50 border-slate-200';
 
-        g.tasks.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      g.tasks.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        return `
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-4 last:mb-0">
-             <div class="${headerColors} border-b px-4 py-2 font-bold text-sm tracking-wide flex items-center justify-between">
-               <div>${headerStr} ${isToday ? '<span class="ml-2 text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider">Today</span>' : ''}</div>
-             </div>
-             <div class="flex flex-col divide-y divide-slate-100">
-               ${g.tasks.map(task => {
+      return `
+        <div ${isToday ? 'id="today-group"' : ''} class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-4 last:mb-0 scroll-mt-20">
+           <div class="${headerColors} border-b px-4 py-2 font-bold text-sm tracking-wide flex items-center justify-between">
+             <div>${headerStr} ${isToday ? '<span class="ml-2 text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded-full uppercase tracking-wider">Today</span>' : ''}</div>
+           </div>
+           <div class="flex flex-col divide-y divide-slate-100">
+             ${g.tasks.map(task => {
                   const course = state.courses.find(c => c.id === task.courseId) || (task.courseId === 'custom' ? { name: 'オンデマンド以外' } : { name: '不明な科目' });
                   const isOverdue = !task.completed && task.type !== 'delivery' && isPastButNotToday(task.date);
                   const isTodayTask = !task.completed && task.type !== 'delivery' && isTodayDate(task.date);
@@ -1032,7 +1045,6 @@ function renderTasksTab() {
           </div>
         `;
       }).join('');
-    }
   }
 
   return `
