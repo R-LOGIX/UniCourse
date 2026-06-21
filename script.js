@@ -627,13 +627,13 @@ function addWidget(id) {
 function renderHomeTab() {
   const now = new Date();
   const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const in7DaysTs = todayTs + (7 * 24 * 60 * 60 * 1000); // 7 days from today
+  const in5DaysTs = todayTs + (5 * 24 * 60 * 60 * 1000); // 5 days from today
 
-  // Types: watch, assignment within 7 days
+  // Types: watch, assignment within 5 days
   const upcomingDeadlines = state.tasks.filter(t => {
     if (t.completed || t.type === 'delivery') return false;
     const ts = new Date(t.date).getTime();
-    return ts >= (now.getTime() - 24*60*60*1000) && ts <= (in7DaysTs + 24*60*60*1000 - 1); 
+    return ts >= (now.getTime() - 24*60*60*1000) && ts <= (in5DaysTs + 24*60*60*1000 - 1); 
   }).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   // Recent schedule (delivery events within next 7 days)
@@ -680,7 +680,7 @@ function renderHomeTab() {
   const widgetDefs = {
     deadlines: {
       id: 'deadlines',
-      title: '7日以内の期限',
+      title: '5日以内の期限',
       icon: 'alert-circle',
       iconColor: 'text-red-500',
       html: generateTaskHtml(upcomingDeadlines, "直近の期限はありません。よくやりました！", true)
