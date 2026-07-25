@@ -481,9 +481,10 @@ function startEditTask(taskId) {
     courseId: t.courseId,
     lectureName: t.lectureName,
     type: t.type,
-    dateStr: "",
+    dateStr: dateStr,
     timeStr: timeStr,
-    }
+    description: t.description || "",
+  }
   render();
 }
 
@@ -499,8 +500,10 @@ function saveEditTask() {
       const lecInput = document.getElementById("edit-lecture-input");
       const dateInput = document.getElementById("edit-date-input");
       const timeInput = document.getElementById("edit-time-input");
+      const descInput = document.getElementById("edit-desc-input");
       if (courseInput) t.courseId = courseInput.value;
       if (lecInput) t.lectureName = lecInput.value.trim() || "無題の課題";
+      if (descInput) t.description = descInput.value;
       if (state.editTaskData.type) t.type = state.editTaskData.type;
 
       let dStr = dateInput ? dateInput.value : (state.editTaskData ? state.editTaskData.dateStr : "");
@@ -998,6 +1001,7 @@ function renderTasksTab() {
                          </select>
                          
                       </div>
+                      <textarea id="edit-desc-input" oninput="state.editTaskData.description=this.value" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm outline-none resize-none h-16 bg-white mb-2" placeholder="提出方法や課題の詳細など...">${state.editTaskData.description || ""}</textarea>
                       <div class="flex gap-1 mb-1 flex-wrap">
                         <button onclick="setEditTaskDateTo(0)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">今日</button>
                         <button onclick="setEditTaskDateTo(1)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">明日</button>
@@ -1148,6 +1152,7 @@ function renderTasksTab() {
                          </select>
                          
                       </div>
+                      <textarea id="edit-desc-input" oninput="state.editTaskData.description=this.value" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm outline-none resize-none h-16 bg-white mb-2" placeholder="提出方法や課題の詳細など...">${state.editTaskData.description || ""}</textarea>
                       <div class="flex gap-1 mb-1 flex-wrap">
                         <button onclick="setEditTaskDateTo(0)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">今日</button>
                         <button onclick="setEditTaskDateTo(1)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">明日</button>
