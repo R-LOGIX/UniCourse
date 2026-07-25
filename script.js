@@ -654,16 +654,16 @@ function renderHomeTab() {
     now.getMonth(),
     now.getDate(),
   ).getTime();
-  const in5DaysTs = todayTs + 5 * 24 * 60 * 60 * 1000; // 5 days from today
+  const in7DaysTs = todayTs + 7 * 24 * 60 * 60 * 1000; // 7 days from today
 
-  // Types: watch, assignment within 5 days
+  // Types: watch, assignment within 7 days
   const upcomingDeadlines = state.tasks
     .filter((t) => {
       if (t.completed || false) return false;
       const ts = new Date(t.date).getTime();
       return (
         ts >= now.getTime() - 24 * 60 * 60 * 1000 &&
-        ts <= in5DaysTs + 24 * 60 * 60 * 1000 - 1
+        ts <= in7DaysTs + 24 * 60 * 60 * 1000 - 1
       );
     })
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
