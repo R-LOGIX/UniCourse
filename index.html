@@ -3,22 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>オンデマンド受講管理｜UniCourse</title>
+  <title>課題管理アプリ｜UniCourse</title>
   <meta name="theme-color" content="#2563eb" />
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="受講管理">
+  <meta name="apple-mobile-web-app-title" content="課題管理">
   <link rel="apple-touch-icon" href="/icon.png">
-  <link rel="manifest" href='data:application/manifest+json;utf-8,{"name":"オンデマンド受講管理","short_name":"受講管理","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#2563eb","icons":[{"src":"/icon.png","sizes":"192x192","type":"image/png"},{"src":"/icon.png","sizes":"512x512","type":"image/png"}]}' />
+  <link rel="manifest" href='data:application/manifest+json;utf-8,{"name":"課題管理アプリ","short_name":"課題管理","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#2563eb","icons":[{"src":"/icon.png","sizes":"192x192","type":"image/png"},{"src":"/icon.png","sizes":"512x512","type":"image/png"}]}' />
   <!-- Tailwind CSS via browser for plain HTML/JS setups -->
   <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
   <!-- Lucide Icons mapping -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <!-- Flatpickr for Multiple Date Selection -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ja.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="bg-slate-50 font-sans text-slate-800 pb-20 sm:pb-0 min-h-screen flex flex-col">
@@ -26,7 +22,7 @@
   <header class="bg-blue-600 text-white p-4 shadow-sm sticky top-0 z-10 flex items-center justify-between">
     <h1 class="text-xl font-bold flex items-center gap-2">
       <i data-lucide="book-open" class="w-5 h-5"></i>
-      オンデマンド受講管理｜UniCourse
+      課題管理アプリ｜UniCourse
     </h1>
   </header>
 
@@ -60,6 +56,6 @@
   <div id="modal-root"></div>
 
   <!-- Main logic script -->
-  <script src="/script.js"></script>
+  <script type="module" src="/script.js"></script>
 </body>
 </html>
