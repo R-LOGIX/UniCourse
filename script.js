@@ -1,6 +1,7 @@
 // script.js
 const STORAGE_KEY = "ondemand_app_data";
 
+let tpConf = null;
 let state = {
   activeTab: "home",
   taskSortMode: "today", // 'today', 'course' or 'date'
@@ -16,16 +17,9 @@ let state = {
   editingLecture: null, // { courseId, oldName, newName }
   editingTaskId: null,
   editTaskData: null,
-  showCustomAssignment: false,
-  customAssignInput: {
-    courseName: "",
-    dateStr: "",
-    timeStr: "23:59",
-    isSelfDeadline: false,
-    description: "",
-  },
-  widgets: ["deadlines", "schedule"],
+  widgets: ["deadlines_assignment", "deadlines_study", "completed", "memo"],
   memoContent: "",
+  memoForceAddedV2: false,
 };
 
 // Generate UUID-like short ID
@@ -164,15 +158,18 @@ function loadData() {
       state.courses = parsed.courses || [];
       state.tasks = (parsed.tasks || []).map((t) => ({
         ...t,
-        lectureName: t.lectureName || "無題の講義",
-        isSelfDeadline:
-          t.isSelfDeadline !== undefined
-            ? t.isSelfDeadline
-            : t.deadlineType === "self",
+        lectureName: (t.lectureName === "無題の講義" ? "無題の課題" : t.lectureName) || "無題の課題",
+        type: t.type || "assignment",
         updatedAt: t.updatedAt || 0,
       }));
       state.lastExportTime = parsed.lastExportTime || 0;
-      if (parsed.widgets) state.widgets = parsed.widgets;
+      state.widgets = parsed.widgets || ["deadlines_assignment", "deadlines_study", "completed", "memo"];
+      if (!parsed.memoForceAddedV2) {
+        if (!state.widgets.includes("memo")) state.widgets.push("memo");
+        state.memoForceAddedV2 = true;
+      } else {
+        state.memoForceAddedV2 = parsed.memoForceAddedV2;
+      }
       if (parsed.memoContent !== undefined)
         state.memoContent = parsed.memoContent;
     }
@@ -192,6 +189,7 @@ function saveData() {
         lastExportTime: state.lastExportTime || 0,
         widgets: state.widgets,
         memoContent: state.memoContent,
+        memoForceAddedV2: state.memoForceAddedV2,
       }),
     );
   } catch (e) {
@@ -391,9 +389,8 @@ function formatTaskDate(isoString) {
 }
 
 const typeLabels = {
-  delivery: "配信日",
-  watch: "視聴期限",
-  assignment: "課題期限",
+  assignment: "課題",
+  study: "自主学習",
 };
 
 function isPastButNotToday(isoString) {
@@ -437,15 +434,44 @@ function saveLectureName() {
   render();
 }
 
+
+function shiftEditTaskDateRelative(days) {
+  if(!state.editTaskData) return;
+  const el = document.getElementById("edit-date-input");
+  let dStr = el ? el.value : state.editTaskData.dateStr;
+  dStr = dStr.trim().replace(/\./g, '-');
+  const dParts = dStr.split('-');
+  if (dParts.length === 3) {
+    dStr = `${dParts[0]}-${dParts[1].padStart(2, '0')}-${dParts[2].padStart(2, '0')}`;
+  }
+  const dObj = new Date(dStr);
+  if (!isNaN(dObj.getTime())) {
+    dObj.setDate(dObj.getDate() + days);
+    const newDateStr = `${dObj.getFullYear()}.${dObj.getMonth()+1}.${dObj.getDate()}`;
+    if (el) el.value = newDateStr;
+    state.editTaskData.dateStr = newDateStr;
+  }
+}
+
+function setEditTaskDateTo(daysOffsetFromToday) {
+  if(!state.editTaskData) return;
+  const dObj = new Date();
+  dObj.setDate(dObj.getDate() + daysOffsetFromToday);
+  const newDateStr = `${dObj.getFullYear()}.${dObj.getMonth()+1}.${dObj.getDate()}`;
+  const el = document.getElementById("edit-date-input");
+  if (el) el.value = newDateStr;
+  state.editTaskData.dateStr = newDateStr;
+}
+
 function startEditTask(taskId) {
+
   const t = state.tasks.find((x) => x.id === taskId);
   if (!t) return;
   const dateObj = new Date(t.date);
-  // Get local date/time string correctly formatted
   const year = dateObj.getFullYear();
-  const month = (dateObj.getMonth() + 1).toString().padStart(2, "0");
-  const day = dateObj.getDate().toString().padStart(2, "0");
-  const dateStr = `${year}-${month}-${day}`;
+  const month = (dateObj.getMonth() + 1);
+  const day = dateObj.getDate();
+  const dateStr = `${year}.${month}.${day}`;
   const hours = dateObj.getHours().toString().padStart(2, "0");
   const mins = dateObj.getMinutes().toString().padStart(2, "0");
   const timeStr = `${hours}:${mins}`;
@@ -455,10 +481,9 @@ function startEditTask(taskId) {
     courseId: t.courseId,
     lectureName: t.lectureName,
     type: t.type,
-    dateStr: dateStr,
+    dateStr: "",
     timeStr: timeStr,
-    isSelfDeadline: t.isSelfDeadline,
-  };
+    }
   render();
 }
 
@@ -470,31 +495,29 @@ function saveEditTask() {
   setTimeout(() => {
     const t = state.tasks.find((x) => x.id === state.editingTaskId);
     if (t) {
-      // Read directly from DOM to ensure we get the latest value (especially for mobile time pickers)
       const courseInput = document.getElementById("edit-course-input");
       const lecInput = document.getElementById("edit-lecture-input");
-      const typeInput = document.getElementById("edit-type-input");
       const dateInput = document.getElementById("edit-date-input");
       const timeInput = document.getElementById("edit-time-input");
-      const selfInput = document.getElementById("edit-self-input");
-
       if (courseInput) t.courseId = courseInput.value;
-      if (lecInput) t.lectureName = lecInput.value.trim() || "無題の講義";
-      if (typeInput) t.type = typeInput.value;
-      if (selfInput) t.isSelfDeadline = selfInput.checked;
+      if (lecInput) t.lectureName = lecInput.value.trim() || "無題の課題";
+      if (state.editTaskData.type) t.type = state.editTaskData.type;
 
-      const d = dateInput
-        ? dateInput.value
-        : state.editTaskData
-          ? state.editTaskData.dateStr
-          : "";
-      const tm = timeInput
-        ? timeInput.value
-        : state.editTaskData
-          ? state.editTaskData.timeStr
-          : "";
+      let dStr = dateInput ? dateInput.value : (state.editTaskData ? state.editTaskData.dateStr : "");
+      dStr = dStr.trim().replace(/\./g, '-');
+      const dParts = dStr.split('-');
+      if (dParts.length === 3) {
+        dStr = `${dParts[0]}-${dParts[1].padStart(2, '0')}-${dParts[2].padStart(2, '0')}`;
+      }
+      const dObj = new Date(dStr);
+      if (!isNaN(dObj.getTime())) {
+        const tm = timeInput ? timeInput.value : (state.editTaskData ? state.editTaskData.timeStr : "");
+        t.date = `${dStr}T${tm || "00:00"}:00`;
+      } else {
+        showToast("日付形式が正しくありません（YYYY.MM.DD）。保存されませんでした。", "error");
+        return;
+      }
 
-      t.date = `${d}T${tm || "00:00"}:00`;
       t.updatedAt = Date.now();
       saveData();
     }
@@ -526,6 +549,8 @@ function render() {
     html = renderCoursesTab();
   } else if (state.activeTab === "settings") {
     html = renderSettingsTab();
+  } else if (state.activeTab === "guide") {
+    html = renderGuideTab();
   } else {
     state.activeTab = "home";
     html = renderHomeTab();
@@ -538,13 +563,7 @@ function render() {
     lucide.createIcons();
   }
 
-  if (state.showCustomAssignment) {
-    renderCustomAssignModal();
-  } else {
-    const el = document.getElementById("custom-assign-modal-root");
-    if (el) el.innerHTML = "";
-  }
-
+  
   // Scroll to today if needed
   if (
     shouldScrollToToday &&
@@ -561,82 +580,6 @@ function render() {
   }
 }
 
-function renderCustomAssignModal() {
-  let root = document.getElementById("custom-assign-modal-root");
-  if (!root) {
-    root = document.createElement("div");
-    root.id = "custom-assign-modal-root";
-    document.body.appendChild(root);
-  }
-
-  root.innerHTML = `
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in" onclick="if(event.target===this) closeCustomAssignment()">
-      <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl flex flex-col gap-4 border border-slate-200">
-        <div class="flex items-center justify-between">
-          <h3 class="font-extrabold text-slate-800 text-lg flex items-center gap-2"><i data-lucide="pen-tool" class="w-5 h-5 text-indigo-600"></i> オンデマンド以外の課題を追加</h3>
-          <button onclick="closeCustomAssignment()" class="text-slate-400 hover:text-slate-600 transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
-        </div>
-        
-        <div class="flex flex-col md:flex-row gap-6 mt-2">
-           <div class="flex flex-col gap-2 relative z-10 mx-auto w-full max-w-[310px] shrink-0">
-              <label class="block text-xs font-bold text-slate-600 mb-1">期限の日付 (必須)</label>
-              <div class="bg-slate-50 border border-slate-200 rounded-xl p-2 flatpickr-wrapper shadow-inner">
-                 <input type="text" id="custom-assign-calendar" class="hidden" />
-              </div>
-           </div>
-           
-           <div class="flex-1 flex flex-col gap-4">
-              <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">科目名 (必須)</label>
-                <input type="text" value="${state.customAssignInput.courseName}" oninput="state.customAssignInput.courseName=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="例: 英語ライティング" />
-              </div>
-              
-              <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">時間</label>
-                <button type="button" onclick="openCustomTimePicker('${state.customAssignInput.timeStr}', 'setCustomAssignTime')" class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none hover:bg-slate-50 transition-colors text-center text-slate-700 font-bold">${state.customAssignInput.timeStr || "23:59"}</button>
-              </div>
-              
-              <div>
-                <label class="block text-xs font-bold text-slate-600 mb-1">詳細説明</label>
-                <textarea oninput="state.customAssignInput.description=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none h-20" placeholder="提出方法や課題の詳細など...">${state.customAssignInput.description}</textarea>
-              </div>
-              
-              <div>
-                <label class="flex items-center gap-2 text-sm cursor-pointer border border-slate-200 bg-slate-50 p-2 rounded-lg font-medium text-slate-700 w-max">
-                   <input type="checkbox" onchange="state.customAssignInput.isSelfDeadline=this.checked" ${state.customAssignInput.isSelfDeadline ? "checked" : ""} class="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"/> 
-                   自主的な目標期限として登録する
-                </label>
-              </div>
-           </div>
-        </div>
-        
-        <div class="flex gap-2 mt-4 pt-4 border-t border-slate-100">
-           <button onclick="closeCustomAssignment()" class="flex-1 py-2.5 bg-slate-100 font-bold text-slate-700 rounded-xl hover:bg-slate-200 transition-colors text-sm">キャンセル</button>
-           <button onclick="saveCustomAssignment()" class="flex-1 py-2.5 bg-indigo-600 font-bold text-white rounded-xl hover:bg-indigo-700 transition-colors flex items-center justify-center gap-1.5 text-sm">追加する</button>
-        </div>
-      </div>
-    </div>
-  `;
-  if (window.lucide) lucide.createIcons({ root });
-
-  if (typeof window.flatpickr !== "undefined") {
-    flatpickr("#custom-assign-calendar", {
-      inline: true,
-      mode: "single",
-      locale: "ja",
-      defaultDate: state.customAssignInput.dateStr || new Date(),
-      onChange: function (selectedDates, dateStr, instance) {
-        state.customAssignInput.dateStr = dateStr;
-      },
-    });
-  }
-}
-
-function setCustomAssignTime(v) {
-  state.customAssignInput.timeStr = v;
-  renderCustomAssignModal();
-}
-
 function renderNav() {
   const mobileNav = document.getElementById("mobile-nav");
   const desktopNav = document.getElementById("desktop-nav");
@@ -645,7 +588,8 @@ function renderNav() {
     { id: "home", label: "ホーム", icon: "home" },
     { id: "tasks", label: "タスク", icon: "clock" },
     { id: "courses", label: "科目管理", icon: "book-open" },
-    { id: "settings", label: "設定", icon: "settings" },
+    { id: "settings", label: "データ管理", icon: "database" },
+    { id: "guide", label: "使い方", icon: "help-circle" },
   ];
 
   mobileNav.innerHTML = tabs
@@ -663,7 +607,7 @@ function renderNav() {
   desktopNav.innerHTML = `
     <div class="px-6 pb-6 text-white text-lg font-bold flex items-center gap-2 border-b border-slate-800">
       <i data-lucide="book-open" class="w-6 h-6 text-blue-400 shrink-0"></i>
-      <span class="leading-tight">オンデマンド受講管理<br/><span class="text-xs text-slate-400 font-normal tracking-wider uppercase">UniCourse</span></span>
+      <span class="leading-tight">課題管理アプリ<br/><span class="text-xs text-slate-400 font-normal tracking-wider uppercase">UniCourse</span></span>
     </div>
     <div class="flex-1 py-4 flex flex-col gap-2 px-4">
       ${tabs
@@ -675,7 +619,7 @@ function renderNav() {
           return `
         <button onclick="setActiveTab('${t.id}')" class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm text-left ${classes}">
           <i data-lucide="${t.icon}" class="w-5 h-5"></i>
-          ${t.id === "home" ? "ホーム" : t.id === "tasks" ? "タスク" : t.id === "courses" ? "科目管理" : "設定とデータ"}
+          ${t.label}
         </button>
         `;
         })
@@ -712,7 +656,7 @@ function renderHomeTab() {
   // Types: watch, assignment within 5 days
   const upcomingDeadlines = state.tasks
     .filter((t) => {
-      if (t.completed || t.type === "delivery") return false;
+      if (t.completed || false) return false;
       const ts = new Date(t.date).getTime();
       return (
         ts >= now.getTime() - 24 * 60 * 60 * 1000 &&
@@ -721,11 +665,14 @@ function renderHomeTab() {
     })
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
+  const upcomingAssignmentDeadlines = upcomingDeadlines.filter((t) => t.type === "assignment");
+  const upcomingStudyDeadlines = upcomingDeadlines.filter((t) => t.type === "study");
+
   // Recent schedule (delivery events within next 7 days)
   const next7DaysTs = todayTs + 7 * 24 * 60 * 60 * 1000;
   const upcomingSchedule = state.tasks
     .filter((t) => {
-      if (t.type !== "delivery") return false;
+      if (true) return false;
       const ts = new Date(t.date).getTime();
       return ts >= todayTs && ts <= next7DaysTs;
     })
@@ -742,19 +689,12 @@ function renderHomeTab() {
         .map((task) => {
           const course =
             state.courses.find((c) => c.id === task.courseId) ||
-            (task.courseId === "custom"
-              ? { name: task.lectureName, isCustom: true }
-              : { name: "不明な科目" });
-          const badgeColor =
-            task.type === "assignment"
-              ? "bg-red-100 text-red-700"
-              : task.type === "watch"
-                ? "bg-amber-100 text-amber-700"
-                : "bg-blue-100 text-blue-700";
+            { name: "その他" };
+          const badgeColor = "bg-blue-100 text-blue-700";
 
           const isPast =
             new Date(task.date).getTime() < now.getTime() &&
-            task.type !== "delivery";
+            true;
 
           return `
         <div class="flex p-3 gap-3 items-center group relative overflow-hidden">
@@ -762,15 +702,16 @@ function renderHomeTab() {
           ${showCheck ? `<button onclick="toggleTaskCompletion('${task.id}')" class="shrink-0 transition-colors ${isPast ? "text-red-500 hover:text-red-600" : "text-blue-600 hover:text-blue-700"}"><i data-lucide="circle" class="w-5 h-5"></i></button>` : ""}
           <div class="flex-1 flex flex-col gap-1 w-full min-w-0">
              <div class="flex items-center gap-2 text-xs">
-                <span class="font-bold truncate text-slate-700">${course.name}</span>
-                ${course.isCustom ? "" : `<span class="text-slate-400 border-l border-slate-200 pl-2 whitespace-nowrap">${task.lectureName}</span>`}
+                <span class="font-bold truncate text-slate-700">${task.lectureName}</span>
+                <span class="text-slate-400 border-l border-slate-200 pl-2 whitespace-nowrap">${course.name}</span>
              </div>
              <div class="flex items-center gap-2 text-xs font-bold tabular-nums ${isPast ? "text-red-500" : "text-slate-600"}">
                 <span class="${badgeColor} px-1.5 py-0.5 rounded-sm shrink-0 whitespace-nowrap">${typeLabels[task.type]}</span>
                 <i data-lucide="clock" class="w-3.5 h-3.5 opacity-70"></i>
-                ${formatTaskDate(task.date)} ${task.type !== "delivery" && !task.date.includes("T00:00:00") ? formatTaskTimeOnly(task.date) : ""}
+                ${formatTaskDate(task.date)}
                 ${isPast ? '<span class="text-[10px] bg-red-50 text-red-600 px-1 rounded uppercase tracking-wider ml-1">overdue</span>' : ""}
              </div>
+             ${(task.description && task.description.trim()) ? `<details class="group/details mt-1"><summary class="text-[11px] font-bold text-blue-600 cursor-pointer select-none flex items-center gap-1 hover:text-blue-700 transition-colors w-max"><i data-lucide="chevron-down" class="w-3.5 h-3.5 transition-transform group-open/details:-rotate-180"></i>課題説明を見る</summary><div class="text-xs text-slate-500 mt-1 pl-4 border-l-2 border-slate-100 whitespace-pre-wrap break-words">${task.description.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div></details>` : ""}
           </div>
         </div>
       `;
@@ -781,28 +722,29 @@ function renderHomeTab() {
   };
 
   const widgetDefs = {
-    deadlines: {
-      id: "deadlines",
-      title: "5日以内の期限",
+    deadlines_assignment: {
+      id: "deadlines_assignment",
+      title: "直近1週間の課題期限",
       icon: "alert-circle",
       iconColor: "text-red-500",
       html: generateTaskHtml(
-        upcomingDeadlines,
+        upcomingAssignmentDeadlines,
         "直近の期限はありません。よくやりました！",
         true,
       ),
     },
-    schedule: {
-      id: "schedule",
-      title: "直近1週間の配信予定",
-      icon: "calendar",
+    deadlines_study: {
+      id: "deadlines_study",
+      title: "直近1週間の自主学習",
+      icon: "book-open",
       iconColor: "text-blue-500",
       html: generateTaskHtml(
-        upcomingSchedule,
-        "直近の配信予定はありません。",
-        false,
+        upcomingStudyDeadlines,
+        "直近の予定はありません。",
+        true,
       ),
     },
+    
     completed: {
       id: "completed",
       title: "最近完了したタスク",
@@ -821,14 +763,12 @@ function renderHomeTab() {
             .map((task) => {
               const course =
                 state.courses.find((c) => c.id === task.courseId) ||
-                (task.courseId === "custom"
-                  ? { name: task.lectureName, isCustom: true }
-                  : { name: "不明な科目" });
+                { name: "その他" };
               return `
              <div class="flex p-3 gap-3 items-center group relative overflow-hidden">
                 <i data-lucide="check" class="w-5 h-5 text-emerald-500 mx-1"></i>
                 <div class="flex-1 flex flex-col w-full min-w-0 line-through text-slate-500">
-                   <div class="text-xs font-bold truncate">${course.name} ${course.isCustom ? "" : `<span class="font-normal text-slate-400">/ ${task.lectureName}</span>`}</div>
+                   <div class="text-xs font-bold truncate">${task.lectureName} <span class="font-normal text-slate-400">/ ${course.name}</span></div>
                    <div class="text-[10px] mt-0.5">${typeLabels[task.type] || task.type}</div>
                 </div>
              </div>`;
@@ -843,9 +783,32 @@ function renderHomeTab() {
       title: "メモ帳",
       icon: "sticky-note",
       iconColor: "text-amber-500",
-      html: `<textarea oninput="state.memoContent=this.value; saveData()" class="w-full border border-amber-200 bg-amber-50/30 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500 resize-none h-32" placeholder="自由にメモを書き込めます...">${state.memoContent || ""}</textarea>`,
+      html: () => `<textarea oninput="state.memoContent=this.value; saveData()" class="w-full border border-amber-200 bg-amber-50/30 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500 resize-none h-32" placeholder="自由にメモを書き込めます...">${state.memoContent || ""}</textarea>`,
     },
   };
+
+  
+  let onboardingHtml = "";
+  if (state.courses.length === 0 && state.tasks.length === 0) {
+    onboardingHtml = `
+      <div class="bg-indigo-50 border border-indigo-200 p-5 rounded-2xl mb-4 relative overflow-hidden">
+        <div class="absolute right-0 top-0 opacity-10 pointer-events-none -mt-4 -mr-4">
+           <i data-lucide="sparkles" class="w-32 h-32 text-indigo-600"></i>
+        </div>
+        <h3 class="text-indigo-800 font-extrabold text-lg flex items-center gap-2 mb-2 relative z-10">
+          <i data-lucide="help-circle" class="w-5 h-5"></i> UniCourseへようこそ！
+        </h3>
+        <p class="text-indigo-700 text-sm font-medium leading-relaxed relative z-10">
+          まずは下のナビゲーションから「科目管理」を開き、受講している科目を追加しましょう。<br>
+          科目を追加すると、その科目に対する「課題」や「自主学習」を登録できるようになります。<br>
+          設定タブからより詳しい使い方ガイドも確認できます。
+        </p>
+        <button onclick="setActiveTab('courses')" class="mt-3 bg-indigo-600 text-white font-bold py-2 px-5 rounded-lg text-sm shadow-sm hover:bg-indigo-700 transition-colors relative z-10">
+          科目管理へ進む
+        </button>
+      </div>
+    `;
+  }
 
   const activeWidgetsHtml = state.widgets
     .map((wId) => {
@@ -859,9 +822,7 @@ function renderHomeTab() {
              <i data-lucide="${w.icon}" class="w-4 h-4 ${w.iconColor}"></i>
              ${w.title}
            </h3>
-           <button onclick="removeWidget('${w.id}')" class="opacity-0 group-hover:opacity-100 text-slate-300 hover:bg-red-50 hover:text-red-500 p-1.5 rounded-lg transition-all" aria-label="ウィジェット削除">
-             <i data-lucide="x" class="w-4 h-4"></i>
-           </button>
+           
          </div>
          ${content}
       </div>
@@ -869,44 +830,17 @@ function renderHomeTab() {
     })
     .join("");
 
-  const inactiveWidgets = Object.values(widgetDefs).filter(
-    (w) => !state.widgets.includes(w.id),
-  );
-  const addWidgetBtnHtml =
-    inactiveWidgets.length > 0
-      ? `
-    <div class="relative inline-block w-full text-left" id="add-widget-dropdown">
-       <button onclick="document.getElementById('widget-menu').classList.toggle('hidden')" class="border border-slate-200 border-dashed text-slate-500 hover:text-blue-600 hover:bg-slate-50 hover:border-blue-300 font-medium py-3 px-4 rounded-xl w-full text-sm transition-all flex items-center justify-center gap-1.5">
-         <i data-lucide="plus-circle" class="w-4 h-4"></i> ウィジェットを追加
-       </button>
-       <div id="widget-menu" class="hidden absolute left-0 right-0 z-10 mt-2 bg-white border border-slate-200 rounded-xl shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden origin-top animate-in zoom-in-95">
-         <div class="py-1">
-           ${inactiveWidgets
-             .map(
-               (w) => `
-             <button onclick="addWidget('${w.id}')" class="flex items-center w-full px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors gap-3 border-b border-slate-100 last:border-0">
-               <div class="bg-slate-100 p-1.5 rounded"><i data-lucide="${w.icon}" class="w-4 h-4 ${w.iconColor}"></i></div>
-               <div class="font-bold text-left">${w.title}を追加</div>
-             </button>
-           `,
-             )
-             .join("")}
-         </div>
-       </div>
-    </div>
-  `
-      : "";
-
   return `
     <div class="flex flex-col gap-6 animate-in fade-in pb-8">
       <div class="flex flex-col gap-1">
+        ${onboardingHtml}
         <h2 class="text-2xl font-black text-slate-800 tracking-tight">ホーム</h2>
         <p class="text-sm text-slate-500 font-medium tracking-wide">本日のステータスと直近の予定</p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
         ${activeWidgetsHtml}
-        ${addWidgetBtnHtml}
+        
       </div>
     </div>
   `;
@@ -926,7 +860,7 @@ function renderTasksTab() {
     return `
       <div class="flex flex-col gap-2 animate-in fade-in">
         <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-          <i data-lucide="clock" class="w-5 h-5"></i> 講義スケジュール
+          <i data-lucide="clock" class="w-5 h-5"></i> 課題・学習リスト
         </h2>
         <div class="text-center p-8 mt-4 bg-white rounded-lg shadow-sm border border-slate-100 text-slate-500">
           表示するタスクがありません。科目管理からタスクを追加してください。
@@ -940,31 +874,24 @@ function renderTasksTab() {
   if (state.taskSortMode === "course") {
     const baseCourses = [...state.courses];
     const customTasks = state.tasks.filter((t) => t.courseId === "custom");
-    const customNames = [...new Set(customTasks.map((t) => t.lectureName))];
-    customNames.forEach((cName) => {
+    if (customTasks.length > 0) {
       baseCourses.push({
         id: "custom",
-        name: cName,
-        isCustom: true,
+        name: "その他"
       });
-    });
+    }
 
     const grouped = baseCourses
       .map((course) => {
-        const courseTasks = state.tasks.filter((t) => {
-          if (course.isCustom)
-            return t.courseId === "custom" && t.lectureName === course.name;
-          return t.courseId === course.id;
-        });
+        const courseTasks = state.tasks.filter((t) => t.courseId === course.id);
         const map = {};
         courseTasks.forEach((t) => {
-          const lecName = course.isCustom ? "登録課題" : t.lectureName;
+          const lecName = t.lectureName;
           if (!map[lecName]) map[lecName] = [];
           map[lecName].push(t);
         });
         const lectures = Object.entries(map).map(([name, tasks]) => {
-          const order = { delivery: 0, watch: 1, assignment: 2 };
-          tasks.sort((a, b) => order[a.type] - order[b.type]);
+          
           return { name, tasks };
         });
         lectures.sort((a, b) => {
@@ -993,7 +920,7 @@ function renderTasksTab() {
           ${lectures
             .map((lec) => {
               let editLecHtml = "";
-              if (course.isCustom) {
+              if (course.id === "custom") {
                 editLecHtml = `<h4 class="font-bold text-slate-700 text-sm ml-1 flex items-center gap-2 group">${lec.name}</h4>`;
               } else if (
                 state.editingLecture &&
@@ -1024,15 +951,15 @@ function renderTasksTab() {
                   .map((task) => {
                     const isOverdue =
                       !task.completed &&
-                      task.type !== "delivery" &&
+                      true &&
                       isPastButNotToday(task.date);
                     const isTodayTask =
                       !task.completed &&
-                      task.type !== "delivery" &&
+                      true &&
                       isTodayDate(task.date);
 
                     let checkBtn = "";
-                    if (task.type !== "delivery") {
+                    if (true) {
                       const checkColor = task.completed
                         ? "text-slate-400"
                         : isOverdue
@@ -1044,12 +971,7 @@ function renderTasksTab() {
                       checkBtn = `<div class="w-2 h-2 rounded-full bg-slate-300"></div>`;
                     }
 
-                    const badgeColors =
-                      task.type === "assignment"
-                        ? "bg-red-100 text-red-700 border border-red-200"
-                        : task.type === "watch"
-                          ? "bg-amber-100 text-amber-700 border border-amber-200"
-                          : "bg-slate-100 text-slate-700 border border-slate-200";
+                    const badgeColors = "bg-blue-100 text-blue-800 border border-blue-200";
 
                     const dateColor =
                       isOverdue && !task.completed
@@ -1064,17 +986,24 @@ function renderTasksTab() {
                       <div class="flex flex-wrap gap-2 items-center">
                          <select id="edit-course-input" onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
                             ${state.courses.map((c) => `<option value="${c.id}" ${state.editTaskData.courseId === c.id ? "selected" : ""}>${c.name}</option>`).join("")}
-                            <option value="custom" ${state.editTaskData.courseId === "custom" ? "selected" : ""}>オンデマンド以外</option>
+                            <option value="custom" ${state.editTaskData.courseId === "custom" ? "selected" : ""}>その他</option>
                          </select>
-                         <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
+                         <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName === '無題の課題' ? '' : state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="課題のタイトルなど…" />
+                         
+                         <input type="text" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" placeholder="YYYY.MM.DD" />
+                         <input type="text" id="edit-time-input" oninput="state.editTaskData.timeStr=this.value" value="${state.editTaskData.timeStr || "00:00"}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[70px] text-center" placeholder="HH:MM" />
                          <select id="edit-type-input" onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
-                           <option value="delivery" ${state.editTaskData.type === "delivery" ? "selected" : ""}>配信日</option>
-                           <option value="watch" ${state.editTaskData.type === "watch" ? "selected" : ""}>視聴期限</option>
-                           <option value="assignment" ${state.editTaskData.type === "assignment" ? "selected" : ""}>課題提出</option>
+                           <option value="assignment" ${state.editTaskData.type === 'assignment' ? 'selected' : ''}>課題</option>
+                           <option value="study" ${state.editTaskData.type === 'study' ? 'selected' : ''}>自主学習</option>
                          </select>
-                         <input type="date" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
-                         <button type="button" onclick="openCustomTimePicker('${state.editTaskData.timeStr}', 'setEditTaskTime')" class="bg-white border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[70px] text-center whitespace-nowrap overflow-hidden">${state.editTaskData.timeStr || "00:00"}</button>
-                         <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" onchange="state.editTaskData.isSelfDeadline=this.checked" ${state.editTaskData.isSelfDeadline ? "checked" : ""} /> 自主期限</label>
+                         
+                      </div>
+                      <div class="flex gap-1 mb-1 flex-wrap">
+                        <button onclick="setEditTaskDateTo(0)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">今日</button>
+                        <button onclick="setEditTaskDateTo(1)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">明日</button>
+                        <button onclick="shiftEditTaskDateRelative(1)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">+1日</button>
+                        <button onclick="shiftEditTaskDateRelative(7)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">+1週間</button>
+                      </div>
                       </div>
                       <div class="flex justify-end gap-2">
                          <button onclick="cancelEditTask()" class="text-sm bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded font-bold text-slate-700 transition">キャンセル</button>
@@ -1087,10 +1016,12 @@ function renderTasksTab() {
                     return `
                   <div class="flex items-center gap-3 group/task hover:bg-slate-50 p-1.5 -ml-1.5 rounded transition-colors">
                     <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
-                    <div class="flex-1 flex flex-wrap items-center gap-2 text-sm ${task.completed ? "opacity-50 line-through" : ""}">
-                      <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
-                      <span class="font-bold tabular-nums ${dateColor}">${formatTaskDate(task.date)}</span>
-                      ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ""}
+                    <div class="flex-1 flex flex-col gap-1 text-sm ${task.completed ? "opacity-50 line-through" : ""}">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
+                        <span class="font-bold tabular-nums ${dateColor}">${formatTaskDate(task.date)}</span>
+                      </div>
+                      ${(task.description && task.description.trim()) ? `<details class="group/details mt-1 w-full"><summary class="text-[11px] font-bold text-blue-600 cursor-pointer select-none flex items-center gap-1 hover:text-blue-700 transition-colors w-max"><i data-lucide="chevron-down" class="w-3.5 h-3.5 transition-transform group-open/details:-rotate-180"></i>課題説明を見る</summary><div class="text-xs text-slate-500 mt-1 pl-4 border-l-2 border-slate-100 whitespace-pre-wrap break-words">${task.description.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div></details>` : ""}
                     </div>
                     <div class="flex items-center gap-1 opacity-100 shrink-0">
                       <button onclick="startEditTask('${task.id}')" class="text-slate-300 hover:text-blue-500 p-1 hover:bg-blue-50 rounded" title="タスク編集">
@@ -1167,20 +1098,18 @@ function renderTasksTab() {
                .map((task) => {
                  const course =
                    state.courses.find((c) => c.id === task.courseId) ||
-                   (task.courseId === "custom"
-                     ? { name: task.lectureName, isCustom: true }
-                     : { name: "不明な科目" });
+                   { name: "その他" };
                  const isOverdue =
                    !task.completed &&
-                   task.type !== "delivery" &&
+                   true &&
                    isPastButNotToday(task.date);
                  const isTodayTask =
                    !task.completed &&
-                   task.type !== "delivery" &&
+                   true &&
                    isTodayDate(task.date);
 
                  let checkBtn = "";
-                 if (task.type !== "delivery") {
+                 if (true) {
                    const checkColor = task.completed
                      ? "text-slate-400"
                      : isOverdue
@@ -1192,12 +1121,7 @@ function renderTasksTab() {
                    checkBtn = `<div class="w-2 h-2 rounded-full bg-slate-300"></div>`;
                  }
 
-                 const badgeColors =
-                   task.type === "assignment"
-                     ? "bg-red-100 text-red-700 border border-red-200"
-                     : task.type === "watch"
-                       ? "bg-amber-100 text-amber-700 border border-amber-200"
-                       : "bg-slate-100 text-slate-700 border border-slate-200";
+                 const badgeColors = "bg-blue-100 text-blue-800 border border-blue-200";
 
                  const dateColor =
                    isOverdue && !task.completed
@@ -1212,18 +1136,25 @@ function renderTasksTab() {
                         <div class="flex flex-wrap gap-2 items-center">
                            <select id="edit-course-input" onchange="state.editTaskData.courseId=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white max-w-[120px]">
                              ${state.courses.map((c) => `<option value="${c.id}" ${state.editTaskData.courseId === c.id ? "selected" : ""}>${c.name}</option>`).join("")}
-                             <option value="custom" ${state.editTaskData.courseId === "custom" ? "selected" : ""}>オンデマンド以外</option>
+                             <option value="custom" ${state.editTaskData.courseId === "custom" ? "selected" : ""}>その他</option>
                            </select>
-                           <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="講義名" />
-                           <select id="edit-type-input" onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
-                             <option value="delivery" ${state.editTaskData.type === "delivery" ? "selected" : ""}>配信日</option>
-                             <option value="watch" ${state.editTaskData.type === "watch" ? "selected" : ""}>視聴期限</option>
-                             <option value="assignment" ${state.editTaskData.type === "assignment" ? "selected" : ""}>課題提出</option>
-                           </select>
-                           <input type="date" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" />
-                           <button type="button" onclick="openCustomTimePicker('${state.editTaskData.timeStr}', 'setEditTaskTime')" class="bg-white border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[70px] text-center whitespace-nowrap overflow-hidden">${state.editTaskData.timeStr || "00:00"}</button>
-                           <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="checkbox" id="edit-self-input" onchange="state.editTaskData.isSelfDeadline=this.checked" ${state.editTaskData.isSelfDeadline ? "checked" : ""} /> 自主期限</label>
-                        </div>
+                           <input type="text" id="edit-lecture-input" oninput="state.editTaskData.lectureName=this.value" value="${state.editTaskData.lectureName === '無題の課題' ? '' : state.editTaskData.lectureName}" class="border border-slate-300 rounded px-2 py-1.5 text-base w-32 outline-none" placeholder="課題のタイトルなど…" />
+                           
+                           <input type="text" id="edit-date-input" oninput="state.editTaskData.dateStr=this.value" value="${state.editTaskData.dateStr}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[120px]" placeholder="YYYY.MM.DD" />
+                         <input type="text" id="edit-time-input" oninput="state.editTaskData.timeStr=this.value" value="${state.editTaskData.timeStr || "00:00"}" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none w-auto min-w-[70px] text-center" placeholder="HH:MM" />
+                         <select id="edit-type-input" onchange="state.editTaskData.type=this.value" class="border border-slate-300 rounded px-2 py-1.5 text-base outline-none bg-white">
+                           <option value="assignment" ${state.editTaskData.type === 'assignment' ? 'selected' : ''}>課題</option>
+                           <option value="study" ${state.editTaskData.type === 'study' ? 'selected' : ''}>自主学習</option>
+                         </select>
+                         
+                      </div>
+                      <div class="flex gap-1 mb-1 flex-wrap">
+                        <button onclick="setEditTaskDateTo(0)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">今日</button>
+                        <button onclick="setEditTaskDateTo(1)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">明日</button>
+                        <button onclick="shiftEditTaskDateRelative(1)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">+1日</button>
+                        <button onclick="shiftEditTaskDateRelative(7)" class="text-xs bg-white px-2 py-1 rounded border border-slate-200 hover:bg-slate-50">+1週間</button>
+                      </div>
+                      </div>
                         <div class="flex justify-end gap-2 mt-1">
                            <button onclick="cancelEditTask()" class="text-sm bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded font-bold text-slate-700 transition">キャンセル</button>
                            <button onclick="saveEditTask()" class="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded font-bold text-white transition">保存</button>
@@ -1237,16 +1168,16 @@ function renderTasksTab() {
                     <div class="flex items-center justify-center w-6 shrink-0">${checkBtn}</div>
                     <div class="flex-1 flex flex-col gap-1 ${task.completed ? "opacity-50 line-through" : ""}">
                       <div class="flex flex-wrap items-center gap-2 text-sm">
-                        <span class="font-bold text-slate-700 text-xs truncate max-w-[150px]" title="${course.name}">${course.name}</span>
-                        ${course.isCustom ? "" : `<span class="text-slate-500 text-xs border-l border-slate-300 pl-2">${task.lectureName}</span>`}
+                        <span class="font-bold text-slate-700 text-xs truncate max-w-[150px]" title="${task.lectureName}">${task.lectureName}</span>
+                        <span class="text-slate-500 text-xs border-l border-slate-300 pl-2">${course.name}</span>
                         <span class="font-bold text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${badgeColors}">${typeLabels[task.type]}</span>
-                        ${task.isSelfDeadline ? `<span class="text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">自主期限</span>` : ""}
+                        
                       </div>
                       <div class="text-xs font-bold tabular-nums flex items-center gap-1.5 ${dateColor}">
                         <i data-lucide="clock" class="w-3.5 h-3.5"></i>
-                        ${task.date.includes("T00:00:00") && task.type === "delivery" ? "時間未定" : formatTaskTimeOnly(task.date)}
+                        ${task.date.includes("T00:00:00") && false ? "時間未定" : formatTaskTimeOnly(task.date)}
                       </div>
-                      ${task.description ? `<p class="text-xs text-slate-500 mt-0.5 truncate whitespace-normal break-words">${task.description.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>` : ""}
+                      ${(task.description && task.description.trim()) ? `<details class="group/details mt-1"><summary class="text-[11px] font-bold text-blue-600 cursor-pointer select-none flex items-center gap-1 hover:text-blue-700 transition-colors w-max"><i data-lucide="chevron-down" class="w-3.5 h-3.5 transition-transform group-open/details:-rotate-180"></i>課題説明を見る</summary><div class="text-xs text-slate-500 mt-1 pl-4 border-l-2 border-slate-100 whitespace-pre-wrap break-words">${task.description.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div></details>` : ""}
                     </div>
                     <div class="flex flex-col sm:flex-row items-center gap-1 opacity-100 shrink-0">
                       <button onclick="startEditTask('${task.id}')" class="text-slate-300 hover:text-blue-500 p-1.5 hover:bg-blue-50 rounded" title="タスク編集">
@@ -1271,7 +1202,7 @@ function renderTasksTab() {
     <div class="flex flex-col gap-2 animate-in fade-in">
       <div class="flex items-center justify-between">
         <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-          <i data-lucide="clock" class="w-5 h-5"></i> 講義スケジュール
+          <i data-lucide="clock" class="w-5 h-5"></i> 課題・学習リスト
         </h2>
         ${switchHtml}
       </div>
@@ -1288,11 +1219,11 @@ function renderCoursesTab() {
         <h3 class="font-bold text-slate-700">新規科目の追加</h3>
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">科目名</label>
-          <input type="text" id="cname" value="${state.courseNameInput}" oninput="state.courseNameInput=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="例: 情報学基礎" />
+          <input type="text" id="cname" value="${state.courseNameInput}" oninput="state.courseNameInput=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="科目名" />
         </div>
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">科目説明 (任意)</label>
-          <textarea id="cdesc" oninput="state.courseDescInput=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-none h-20" placeholder="例: 第1クォーター 月曜2限">${state.courseDescInput}</textarea>
+          <textarea id="cdesc" oninput="state.courseDescInput=this.value" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-none h-20" placeholder="科目に関する説明やメモ">${state.courseDescInput}</textarea>
         </div>
         <div class="flex justify-end gap-2 mt-2">
           <button onclick="state.showAddCourse=false;render()" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">キャンセル</button>
@@ -1321,7 +1252,7 @@ function renderCoursesTab() {
       } else {
         const descText = course.description
           ? course.description.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-          : '<span class="text-slate-400 italic text-xs">説明なし</span>';
+          : "";
         headerAndDescHtml = `
         <div class="flex-1 w-full max-w-[calc(100%-2rem)] pr-2 group cursor-pointer" onclick="state.editingCourseId='${course.id}'; state.editCourseName='${course.name.replace(/'/g, "\\'")}'; state.editCourseDesc='${(course.description || "").replace(/'/g, "\\'").replace(/\n/g, "\\n")}'; render()">
            <div class="flex items-center gap-2">
@@ -1353,8 +1284,8 @@ function renderCoursesTab() {
         ${
           state.editingCourseId !== course.id
             ? `
-        <button onclick="openScheduleAdder('${course.id}')" class="mt-5 border border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50/50 font-bold py-2.5 px-4 rounded-xl w-full text-sm transition-all flex items-center justify-center gap-1.5 shadow-sm">
-          <i data-lucide="plus" class="w-4 h-4"></i> スケジュールを追加
+        <button onclick="openAssignmentAdder('${course.id}')" class="mt-5 border border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50/50 font-bold py-2.5 px-4 rounded-xl w-full text-sm transition-all flex items-center justify-center gap-1.5 shadow-sm">
+          <i data-lucide="plus" class="w-4 h-4"></i> 課題・学習を追加する
         </button>
         `
             : ""
@@ -1392,58 +1323,15 @@ function renderCoursesTab() {
       </div>
 
       <div class="mt-4 pt-4 border-t border-slate-200">
-         <button onclick="openCustomAssignment()" class="bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 font-bold py-3 px-4 rounded-xl w-full text-sm transition-all flex items-center justify-center gap-2 shadow-sm">
-           <i data-lucide="pen-tool" class="w-4 h-4"></i> オンデマンド以外の課題を追加する
+         <button onclick="openAssignmentAdder('custom')" class="bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 font-bold py-3 px-4 rounded-xl w-full text-sm transition-all flex items-center justify-center gap-2 shadow-sm">
+           <i data-lucide="pen-tool" class="w-4 h-4"></i> その他の課題・学習を追加する
          </button>
       </div>
     </div>
   `;
 }
 
-function openCustomAssignment() {
-  const d = new Date();
-  const dateStr = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
 
-  state.showCustomAssignment = true;
-  state.customAssignInput = {
-    courseName: "",
-    dateStr: dateStr,
-    timeStr: "23:59",
-    isSelfDeadline: false,
-    description: "",
-  };
-  render();
-}
-
-function closeCustomAssignment() {
-  state.showCustomAssignment = false;
-  render();
-}
-
-function saveCustomAssignment() {
-  const { courseName, dateStr, timeStr, isSelfDeadline, description } =
-    state.customAssignInput;
-  if (!courseName.trim() || !dateStr) {
-    showToast("科目名と期限の日付は必須です", "error");
-    return;
-  }
-
-  state.tasks.push({
-    id: generateId(),
-    courseId: "custom",
-    lectureName: courseName.trim(), // Storing custom course name in lectureName
-    type: "assignment",
-    date: `${dateStr}T${timeStr || "23:59"}:00`,
-    isSelfDeadline: isSelfDeadline,
-    description: description.trim(),
-    completed: false,
-    updatedAt: Date.now(),
-  });
-
-  saveData();
-  closeCustomAssignment();
-  showToast("課題を追加しました");
-}
 
 function saveCourseEdit(id) {
   const c = state.courses.find((c) => c.id === id);
@@ -1458,40 +1346,130 @@ function saveCourseEdit(id) {
   render();
 }
 
+function renderGuideTab() {
+  return `
+    <div class="flex flex-col animate-in fade-in pb-8">
+      <div class="flex flex-col gap-1 mb-6">
+        <h2 class="text-2xl font-black text-slate-800 tracking-tight">使い方ガイド</h2>
+        <p class="text-sm text-slate-500 font-medium tracking-wide">UniCourse（ユニコース）の便利な使い方</p>
+      </div>
+      
+      <div class="flex flex-col gap-5">
+        
+        <div class="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm flex flex-col gap-4 relative overflow-hidden">
+          <div class="absolute right-0 top-0 opacity-5 pointer-events-none -mt-4 -mr-4">
+             <i data-lucide="book-open" class="w-32 h-32"></i>
+          </div>
+          <div class="flex items-center gap-3 border-b border-slate-100 pb-3 relative z-10">
+             <div class="bg-indigo-100 text-indigo-600 p-2 rounded-lg">
+               <span class="font-bold">STEP 1</span>
+             </div>
+             <h3 class="font-bold text-slate-800 text-lg">科目を登録しよう！</h3>
+          </div>
+          <p class="text-sm text-slate-600 leading-relaxed relative z-10">
+            まずは<strong>「科目管理」</strong>タブを開いて、学校の授業（数学、英語など）や、自分で勉強したいジャンル（資格の勉強など）を追加しましょう。<br>
+            科目を登録しておくと、あとで「この課題はどの科目のものか」がわかりやすくなります。
+          </p>
+        </div>
+
+        <div class="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm flex flex-col gap-4 relative overflow-hidden">
+          <div class="absolute right-0 top-0 opacity-5 pointer-events-none -mt-4 -mr-4">
+             <i data-lucide="edit-3" class="w-32 h-32"></i>
+          </div>
+          <div class="flex items-center gap-3 border-b border-slate-100 pb-3 relative z-10">
+             <div class="bg-blue-100 text-blue-600 p-2 rounded-lg">
+               <span class="font-bold">STEP 2</span>
+             </div>
+             <h3 class="font-bold text-slate-800 text-lg">課題や予定（タスク）を追加しよう！</h3>
+          </div>
+          <p class="text-sm text-slate-600 leading-relaxed relative z-10">
+            科目管理画面で科目を追加したら、<strong>「課題・学習を追加する」</strong>ボタンを押して、出された「課題」や自分の「自主学習」の予定を書き込みます。<br>
+            「いつまでにやるか（日付と時間）」を決めておくと、あとで忘れずにすみますよ。<br>
+            詳しい説明があるときは「課題説明（メモ）」に書いておきましょう。
+          </p>
+        </div>
+
+        <div class="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm flex flex-col gap-4 relative overflow-hidden">
+          <div class="absolute right-0 top-0 opacity-5 pointer-events-none -mt-4 -mr-4">
+             <i data-lucide="check-circle" class="w-32 h-32"></i>
+          </div>
+          <div class="flex items-center gap-3 border-b border-slate-100 pb-3 relative z-10">
+             <div class="bg-emerald-100 text-emerald-600 p-2 rounded-lg">
+               <span class="font-bold">STEP 3</span>
+             </div>
+             <h3 class="font-bold text-slate-800 text-lg">終わったらチェックをつけよう！</h3>
+          </div>
+          <p class="text-sm text-slate-600 leading-relaxed relative z-10">
+            <strong>「タスク」</strong>タブには、登録したすべての課題や予定がリストで並びます。「科目別」か「日付順（すべて）」で見やすい方に切り替えてみてください。<br>
+            課題が終わったら、左側にある丸いボタン（<i data-lucide="circle" class="w-4 h-4 inline-block text-blue-600"></i>）を押して完了（<i data-lucide="check-circle" class="w-4 h-4 inline-block text-slate-400"></i>）にしましょう！
+          </p>
+        </div>
+
+        <div class="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm flex flex-col gap-4 relative overflow-hidden">
+          <div class="absolute right-0 top-0 opacity-5 pointer-events-none -mt-4 -mr-4">
+             <i data-lucide="home" class="w-32 h-32"></i>
+          </div>
+          <div class="flex items-center gap-3 border-b border-slate-100 pb-3 relative z-10">
+             <div class="bg-amber-100 text-amber-600 p-2 rounded-lg">
+               <span class="font-bold">STEP 4</span>
+             </div>
+             <h3 class="font-bold text-slate-800 text-lg">ホーム画面を活用しよう！</h3>
+          </div>
+          <p class="text-sm text-slate-600 leading-relaxed relative z-10">
+            アプリを開くと最初に表示される<strong>「ホーム」</strong>タブでは、直近1週間のうちに期限がくる課題や、これからの自主学習の予定がパッと見てわかります。<br>
+            ちょっとしたことを書いておける「メモ帳」もあるので、思いついたことを忘れないうちに書き留めておけます。
+          </p>
+        </div>
+        
+        <div class="bg-slate-50 border border-slate-200 p-5 rounded-2xl shadow-sm flex flex-col gap-3">
+          <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+            <i data-lucide="info" class="w-4 h-4 text-slate-500"></i> 大切なデータについて
+          </h3>
+          <p class="text-sm text-slate-600 leading-relaxed">
+            スマホやパソコンを新しくするときや、万が一のために、<strong>「データ管理」</strong>タブからデータのバックアップ（エクスポート）ができます。ダウンロードしたファイルから元通りに復元（インポート）できるので安心です。
+          </p>
+        </div>
+
+      </div>
+    </div>
+  `;
+}
+
 function renderSettingsTab() {
   return `
-    <div class="flex flex-col gap-4 animate-in fade-in">
-      <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-        <i data-lucide="settings" class="w-5 h-5"></i> 設定・使い方ガイド
-      </h2>
-      
-      <div class="bg-indigo-50 border border-indigo-100 p-5 rounded-xl shadow-sm">
-        <h3 class="font-bold text-indigo-800 text-sm mb-2 flex items-center gap-2">
-           <i data-lucide="info" class="w-4 h-4"></i> 基本的な使い方
-        </h3>
-        <ol class="list-decimal list-inside text-sm text-indigo-900 leading-relaxed space-y-2 mb-2">
-          <li><strong>科目を登録する：</strong>「科目管理」タブから授業を追加し、「スケジュールを追加」から日程を一括登録します。</li>
-          <li><strong>タスクの管理：</strong>「タスク」タブで、配信日・視聴期限・課題提出の予定を確認し、完了したものはチェックをつけます。</li>
-          <li><strong>データのバックアップ・復元:</strong> 他の端末やブラウザにデータを移行したい場合は、「jsonデータをエクスポート」し、新しい環境で「jsonデータのインポート」を行ってください。</li>
-        </ol>
+    <div class="flex flex-col animate-in fade-in pb-8">
+      <div class="flex flex-col gap-1 mb-6">
+        <h2 class="text-2xl font-black text-slate-800 tracking-tight">データ管理</h2>
+        <p class="text-sm text-slate-500 font-medium tracking-wide">アプリデータのバックアップと復元</p>
       </div>
-
-      <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col gap-4">
-        <div>
-          <h3 class="font-bold text-slate-700 text-sm mb-2 flex items-center gap-2">
-             <i data-lucide="database" class="w-4 h-4"></i> データのバックアップ・復元
-          </h3>
-          <div class="text-sm text-slate-600 mb-4 leading-relaxed">
-             データの復元や機種変更時の移行に使うためのJSONファイルをダウンロードできます。<br/>
-             <span class="text-xs text-slate-400">※ボタンが機能しない場合は、アプリを「新しいタブで開く」からお試しください。</span>
+      
+      <div class="flex flex-col gap-4 animate-in fade-in">
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col gap-5">
+          <div>
+            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2">
+              <i data-lucide="download" class="w-5 h-5 text-blue-600"></i> バックアップのエクスポート
+            </h3>
+            <p class="text-sm text-slate-600 leading-relaxed mb-4">
+               現在のすべてのデータをJSONファイルとしてダウンロードします。機種変更時のデータ移行や、万が一のデータ消失に備えた定期的なバックアップとしてご利用ください。<br>
+               <span class="text-xs text-slate-400">※ボタンが機能しない場合は、アプリを「新しいタブで開く」からお試しください。</span>
+            </p>
+            <button onclick="exportData()" class="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 px-6 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
+              <i data-lucide="download" class="w-4 h-4"></i> データをエクスポート
+            </button>
           </div>
 
-          <div class="flex flex-col sm:flex-row gap-3">
-            <button onclick="exportData()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-medium py-3 px-4 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
-              <i data-lucide="download" class="w-4 h-4"></i> jsonデータをエクスポート
-            </button>
-            <button onclick="openCombinedImportModal()" class="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-3 px-4 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
-              <i data-lucide="upload" class="w-4 h-4"></i> jsonデータのインポート
+          <hr class="border-slate-100 my-2">
+
+          <div>
+            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2">
+              <i data-lucide="upload" class="w-5 h-5 text-blue-600"></i> データの復元 (インポート)
+            </h3>
+            <p class="text-sm text-slate-600 leading-relaxed mb-4">
+               エクスポートしたJSONファイルを読み込み、データを復元します。<br>
+               <span class="text-red-500 font-bold">※インポートを実行すると、現在のデータは上書きされますのでご注意ください。</span>
+            </p>
+            <button onclick="openCombinedImportModal()" class="w-full sm:w-auto bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold py-3 px-6 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
+              <i data-lucide="upload" class="w-4 h-4"></i> データをインポート
             </button>
           </div>
         </div>
@@ -1511,10 +1489,10 @@ function handleImport(e) {
   e.target.value = "";
 }
 
-// ------ SCHEDULE ADDER MODAL ------
+// ------ ADDER MODAL ------
 let adderConfig = null;
 
-function openScheduleAdder(courseId) {
+function openAssignmentAdder(courseId) {
   const existing = state.tasks
     .filter((t) => t.courseId === courseId)
     .map((t) => t.lectureName);
@@ -1529,96 +1507,78 @@ function openScheduleAdder(courseId) {
 
   adderConfig = {
     courseId,
-    startNum: 1, // Start strictly from 1 as requested
-    calendarDates: [],
-    calDeliveryCheck: false,
-    calDeliveryTime: "00:00",
-    calWatchCheck: true,
-    calWatchTime: "23:59",
-    calAssignCheck: false,
-    calAssignTime: "23:59",
-    isSelfDeadline: false,
-  };
+    startNum: max + 1,
+    items: [
+      { dateStr: "", content: "", timeStr: "", type: "assignment", description: "" }
+    ],
+    };
 
   renderModal();
 }
 
-function closeScheduleAdder() {
+function closeAssignmentAdder() {
   adderConfig = null;
   renderModal();
 }
 
-function updateCalField(field, value) {
-  adderConfig[field] = value;
+function addAdderItem() {
+  const nextNum = adderConfig.startNum + adderConfig.items.length;
+  adderConfig.items.push({ dateStr: "", content: "", timeStr: "", type: "assignment", description: "" });
   renderModal();
 }
+
+function removeAdderItem(index) {
+  adderConfig.items.splice(index, 1);
+  renderModal();
+}
+
+function updateAdderItem(index, field, value) {
+  adderConfig.items[index][field] = value;
+}
+
+
 
 function saveAdderTasks() {
   const newTasks = [];
 
-  if (adderConfig.calendarDates.length === 0) {
-    showToast("カレンダーで日付を1つ以上選択してください", "error");
-    return;
+  for (let i = 0; i < adderConfig.items.length; i++) {
+    const item = adderConfig.items[i];
+    if (!item.dateStr.trim()) {
+      showToast(`行 ${i+1} の日付が入力されていません`, "error");
+      return;
+    }
+    
+    // Parse date (e.g. 2026.7.18)
+    let dStr = item.dateStr.trim().replace(/\./g, '-');
+    const dParts = dStr.split('-');
+    if (dParts.length === 3) {
+      dStr = `${dParts[0]}-${dParts[1].padStart(2, '0')}-${dParts[2].padStart(2, '0')}`;
+    }
+    const dObj = new Date(dStr);
+    if (isNaN(dObj.getTime())) {
+      showToast(`行 ${i+1} の日付形式が正しくありません（YYYY.MM.DD）`, "error");
+      return;
+    }
+
+    newTasks.push({
+      id: generateId(),
+      courseId: adderConfig.courseId,
+      lectureName: item.content.trim() || "無題の課題",
+      type: item.type || "assignment",
+      date: `${dStr}T${item.timeStr || "23:59"}:00`,
+      description: item.description || "",
+      completed: false,
+      updatedAt: Date.now(),
+    });
   }
 
-  // Sort dates chronologically
-  const sortedDates = [...adderConfig.calendarDates].sort(
-    (a, b) => new Date(a) - new Date(b),
-  );
-
-  sortedDates.forEach((dateStr, idx) => {
-    const lectureName = `第${adderConfig.startNum + idx}回`;
-    if (adderConfig.calDeliveryCheck) {
-      newTasks.push({
-        id: generateId(),
-        courseId: adderConfig.courseId,
-        lectureName,
-        type: "delivery",
-        date: `${dateStr}T${adderConfig.calDeliveryTime || "00:00"}:00`,
-        isSelfDeadline: false,
-        completed: false,
-        updatedAt: Date.now(),
-      });
-    }
-    if (adderConfig.calWatchCheck) {
-      newTasks.push({
-        id: generateId(),
-        courseId: adderConfig.courseId,
-        lectureName,
-        type: "watch",
-        date: `${dateStr}T${adderConfig.calWatchTime || "23:59"}:00`,
-        isSelfDeadline: adderConfig.isSelfDeadline,
-        completed: false,
-        updatedAt: Date.now(),
-      });
-    }
-    if (adderConfig.calAssignCheck) {
-      newTasks.push({
-        id: generateId(),
-        courseId: adderConfig.courseId,
-        lectureName,
-        type: "assignment",
-        date: `${dateStr}T${adderConfig.calAssignTime || "23:59"}:00`,
-        isSelfDeadline: adderConfig.isSelfDeadline,
-        completed: false,
-        updatedAt: Date.now(),
-      });
-    }
-  });
-
-  if (newTasks.length === 0) {
-    showToast(
-      "作成するタスクの種類（視聴期限など）を選択してください",
-      "error",
-    );
-    return;
-  }
+  if (newTasks.length === 0) return;
 
   state.tasks.push(...newTasks);
   saveData();
-  closeScheduleAdder();
+  closeAssignmentAdder();
   render();
-  showToast("スケジュールを保存しました");
+  showToast("課題・学習を保存しました");
 }
 
 function renderModal() {
@@ -1627,6 +1587,12 @@ function renderModal() {
     root.innerHTML = "";
     return;
   }
+  
+  const isCustom = adderConfig.courseId === "custom";
+  const title = isCustom ? "その他の課題・学習を追加する" : "課題・学習を追加する";
+  const subtitle = isCustom ? "特定の科目に紐づかない単発の課題や予定を追加できます" : "複数の課題や自主学習を一括で追加できます";
+  const icon = isCustom ? "pen-tool" : "list-plus";
+  const iconBg = isCustom ? "bg-indigo-100 text-indigo-600" : "bg-blue-100 text-blue-600";
 
   root.innerHTML = `
     <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
@@ -1635,215 +1601,77 @@ function renderModal() {
         <div class="flex flex-col border-b border-slate-100 bg-slate-50/50 shrink-0">
           <div class="flex justify-between items-center p-6 pb-4">
             <div class="flex items-center gap-3">
-              <div class="bg-blue-100 text-blue-600 p-2 rounded-xl">
-                <i data-lucide="calendar-days" class="w-6 h-6"></i>
+              <div class="${iconBg} p-2 rounded-xl">
+                <i data-lucide="${icon}" class="w-6 h-6"></i>
               </div>
               <div class="flex flex-col">
-                <h4 class="font-extrabold text-slate-800 text-lg tracking-tight">スケジュール追加</h4>
-                <p class="text-[11px] text-slate-500 font-medium mt-0.5">授業のスケジュールをカレンダーで一括作成できます</p>
+                <h4 class="font-extrabold text-slate-800 text-lg tracking-tight">${title}</h4>
+                <p class="text-[11px] text-slate-500 font-medium mt-0.5">${subtitle}</p>
               </div>
             </div>
-            <button onclick="closeScheduleAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
+            <button onclick="closeAssignmentAdder()" class="text-slate-400 hover:text-slate-600 p-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-full transition-colors shadow-sm">
               <i data-lucide="x" class="w-5 h-5"></i>
             </button>
           </div>
-          
-          <div class="px-6 pb-4 pt-1 flex items-center justify-between border-t border-slate-100/50">
-            <div class="flex items-center gap-2">
-               <span class="text-xs font-bold text-slate-600">開始ナンバー:</span>
-               <div class="flex items-center text-sm font-bold bg-white border border-slate-200 rounded text-slate-600 overflow-hidden focus-within:border-blue-500">
-                  <span class="bg-slate-50 px-2 py-1 border-r border-slate-200">第</span>
-                  <input type="number" value="${adderConfig.startNum}" onchange="adderConfig.startNum=parseInt(this.value)||1; renderModal()" class="w-12 text-center py-1 outline-none font-bold text-blue-600" min="1" />
-                  <span class="bg-slate-50 px-2 py-1 border-l border-slate-200">回</span>
-               </div>
-            </div>
-          </div>
         </div>
 
-      <div class="flex-1 flex flex-col md:flex-row p-6 overflow-y-auto bg-slate-50/30 gap-6">
-        <div class="flex flex-col gap-2 relative z-10 w-full md:w-auto">
-          <p class="text-sm font-bold text-slate-700 flex items-center gap-1.5"><i data-lucide="calendar" class="w-4 h-4"></i> 日付を複数選択</p>
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-2 flatpickr-wrapper w-full max-w-[310px]">
-             <input type="text" id="multi-calendar" class="hidden" />
-          </div>
-          <p class="text-[11px] text-slate-500 mt-1 pl-1">※選択した順番に関わらず、日付順に第${adderConfig.startNum}回〜が割り当てられます。</p>
-        </div>
+      <div class="flex-1 flex flex-col p-6 overflow-y-auto bg-slate-50/30 gap-4">
         
-        <div class="flex-1 flex flex-col gap-4">
-           <p class="text-sm font-bold text-slate-700 mt-2 md:mt-0 flex items-center gap-1.5"><i data-lucide="settings-2" class="w-4 h-4"></i> 設定 (選択した全日に適用)</p>
-           
-           <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col gap-4">
-             <!-- Delivery -->
-             <div class="flex items-center gap-3">
-               <label class="flex items-center gap-2 cursor-pointer group">
-                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calDeliveryCheck ? "bg-blue-600 border-blue-600" : "bg-white border-slate-300 group-hover:border-blue-400"}">
-                    ${adderConfig.calDeliveryCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ""}
-                  </div>
-                  <input type="checkbox" onchange="updateCalField('calDeliveryCheck', this.checked)" class="sr-only" ${adderConfig.calDeliveryCheck ? "checked" : ""} />
-                  <span class="text-xs font-bold text-slate-600 select-none">配信日</span>
-               </label>
-               <input id="calDeliveryTimeInput" type="hidden" value="${adderConfig.calDeliveryTime}" />
-               <button type="button" onclick="openCustomTimePicker('${adderConfig.calDeliveryTime}', 'setCalDeliveryTime')" class="bg-slate-50 border border-slate-300 rounded px-2 py-1.5 text-base ml-auto w-auto min-w-[100px] text-center ${!adderConfig.calDeliveryCheck ? "opacity-50 pointer-events-none" : ""}">${adderConfig.calDeliveryTime || "00:00"}</button>
-             </div>
-             
-             <!-- Watch -->
-             <div class="flex items-center gap-3">
-               <label class="flex items-center gap-2 cursor-pointer group">
-                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calWatchCheck ? "bg-amber-500 border-amber-500" : "bg-white border-slate-300 group-hover:border-amber-400"}">
-                    ${adderConfig.calWatchCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ""}
-                  </div>
-                  <input type="checkbox" onchange="updateCalField('calWatchCheck', this.checked)" class="sr-only" ${adderConfig.calWatchCheck ? "checked" : ""} />
-                  <span class="text-xs font-bold text-slate-600 select-none">視聴期限</span>
-               </label>
-               <input id="calWatchTimeInput" type="hidden" value="${adderConfig.calWatchTime}" />
-               <button type="button" onclick="openCustomTimePicker('${adderConfig.calWatchTime}', 'setCalWatchTime')" class="bg-amber-50 border border-amber-300 rounded px-2 py-1.5 text-base ml-auto w-auto min-w-[100px] text-center ${!adderConfig.calWatchCheck ? "opacity-50 pointer-events-none" : ""}">${adderConfig.calWatchTime || "00:00"}</button>
-             </div>
-             
-             <!-- Assign -->
-             <div class="flex items-center gap-3">
-               <label class="flex items-center gap-2 cursor-pointer group">
-                  <div class="w-4 h-4 rounded-sm flex items-center justify-center transition-colors border ${adderConfig.calAssignCheck ? "bg-red-500 border-red-500" : "bg-white border-slate-300 group-hover:border-red-400"}">
-                    ${adderConfig.calAssignCheck ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ""}
-                  </div>
-                  <input type="checkbox" onchange="updateCalField('calAssignCheck', this.checked)" class="sr-only" ${adderConfig.calAssignCheck ? "checked" : ""} />
-                  <span class="text-xs font-bold text-slate-600 select-none">課題提出</span>
-               </label>
-               <input id="calAssignTimeInput" type="hidden" value="${adderConfig.calAssignTime}" />
-               <button type="button" onclick="openCustomTimePicker('${adderConfig.calAssignTime}', 'setCalAssignTime')" class="bg-red-50 border border-red-300 rounded px-2 py-1.5 text-base ml-auto w-auto min-w-[100px] text-center ${!adderConfig.calAssignCheck ? "opacity-50 pointer-events-none" : ""}">${adderConfig.calAssignTime || "00:00"}</button>
-             </div>
-           </div>
+        <div class="flex flex-col gap-3">
+          ${adderConfig.items.map((item, index) => `
+            <div class="flex flex-col gap-4 bg-white border border-slate-200 p-4 rounded-xl shadow-sm relative">
+              <div class="absolute top-2 right-2">
+                <button onclick="removeAdderItem(${index})" class="text-slate-400 hover:text-red-500 p-1.5 transition-colors" title="この行を削除" ${adderConfig.items.length <= 1 ? "disabled class='opacity-50 pointer-events-none'" : ""}>
+                  <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pr-6 sm:pr-0">
+                <div class="flex flex-col">
+                  <label class="text-xs font-bold text-slate-600 mb-1">期限の日付</label>
+                  <input type="text" value="${item.dateStr}" oninput="updateAdderItem(${index}, 'dateStr', this.value)" placeholder="YYYY.MM.DD" class="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                </div>
+                
+                <div class="flex flex-col">
+                  <label class="text-xs font-bold text-slate-600 mb-1">時間</label>
+                  <input type="text" value="${item.timeStr}" oninput="updateAdderItem(${index}, 'timeStr', this.value)" placeholder="HH:MM" class="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 text-center" />
+                </div>
+
+                <div class="flex flex-col">
+                  <label class="text-xs font-bold text-slate-600 mb-1">種類</label>
+                  <select onchange="updateAdderItem(${index}, 'type', this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+                    <option value="assignment" ${item.type === 'assignment' ? 'selected' : ''}>課題</option>
+                    <option value="study" ${item.type === 'study' ? 'selected' : ''}>自主学習</option>
+                  </select>
+                </div>
+
+                <div class="flex flex-col">
+                  <label class="text-xs font-bold text-slate-600 mb-1">課題名</label>
+                  <input type="text" value="${item.content}" oninput="updateAdderItem(${index}, 'content', this.value)" placeholder="課題のタイトルなど…" class="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                </div>
+              </div>
+              <div class="flex flex-col">
+                <label class="text-xs font-bold text-slate-600 mb-1">詳細説明</label>
+                <textarea oninput="updateAdderItem(${index}, 'description', this.value)" placeholder="提出方法や課題の詳細など..." class="border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 resize-none h-16">${item.description || ""}</textarea>
+              </div>
+            </div>
+          `).join('')}
         </div>
-      </div>
+
+        <button onclick="addAdderItem()" class="border-2 border-dashed border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-400 hover:bg-blue-50/50 py-3 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2">
+          <i data-lucide="plus-circle" class="w-4 h-4"></i> さらに行を追加
+        </button>
 
         <div class="p-4 md:p-6 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
-          <label class="flex items-center gap-3 cursor-pointer group">
-              <div class="w-5 h-5 rounded flex items-center justify-center transition-colors border ${adderConfig.isSelfDeadline ? "bg-blue-600 border-blue-600" : "bg-white border-slate-300 group-hover:border-blue-400"}">
-                ${adderConfig.isSelfDeadline ? '<i data-lucide="check" class="w-3 h-3 text-white"></i>' : ""}
-              </div>
-              <input type="checkbox" onchange="adderConfig.isSelfDeadline=this.checked; renderModal()" class="sr-only" ${adderConfig.isSelfDeadline ? "checked" : ""} />
-              <span class="text-sm font-bold text-slate-700 select-none">
-                <span class="text-blue-600">自主的な目標期限</span>として登録する
-              </span>
-          </label>
           <button onclick="saveAdderTasks()" class="w-full md:w-auto bg-blue-600 text-white font-bold tracking-wide py-2.5 px-8 rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 shadow-md hover:shadow-lg">
-             <i data-lucide="calendar" class="w-4 h-4"></i> スケジュールを保存
+             <i data-lucide="save" class="w-4 h-4"></i> 保存する
           </button>
         </div>
+
+      </div>
       </div>
     </div>
   `;
-  if (window.lucide) {
-    lucide.createIcons();
-  }
-
-  if (typeof window.flatpickr !== "undefined") {
-    flatpickr("#multi-calendar", {
-      inline: true,
-      mode: "multiple",
-      locale: "ja",
-      defaultDate: adderConfig.calendarDates,
-      onChange: function (selectedDates, dateStr, instance) {
-        adderConfig.calendarDates = selectedDates.map((d) => {
-          const off = d.getTimezoneOffset();
-          const adjusted = new Date(d.getTime() - off * 60 * 1000);
-          return adjusted.toISOString().split("T")[0];
-        });
-      },
-    });
-  }
-}
-
-// ------ TIME PICKER MODAL ------
-let tpConf = null;
-
-function openCustomTimePicker(initial, callbackFuncStr) {
-  let h = "00",
-    m = "00";
-  if (initial && initial.includes(":")) {
-    const parts = initial.split(":");
-    h = parts[0] || "00";
-    m = parts[1] || "00";
-  }
-  tpConf = { h, m, callback: callbackFuncStr };
-  renderCustomTimePicker();
-}
-
-function closeCustomTimePicker() {
-  tpConf = null;
-  renderCustomTimePicker();
-}
-
-function saveCustomTimePicker() {
-  if (tpConf) {
-    const timeStr = `${String(tpConf.h).padStart(2, "0")}:${String(tpConf.m).padStart(2, "0")}`;
-    if (typeof window[tpConf.callback] === "function") {
-      window[tpConf.callback](timeStr);
-    } else {
-      if (tpConf.callback === "setCalDeliveryTime") setCalDeliveryTime(timeStr);
-      else if (tpConf.callback === "setCalWatchTime") setCalWatchTime(timeStr);
-      else if (tpConf.callback === "setCalAssignTime")
-        setCalAssignTime(timeStr);
-      else if (tpConf.callback === "setEditTaskTime") setEditTaskTime(timeStr);
-      else if (tpConf.callback === "setTaskModalTime")
-        setTaskModalTime(timeStr);
-      else console.error("Callback not found:", tpConf.callback);
-    }
-  }
-  closeCustomTimePicker();
-}
-
-function renderCustomTimePicker() {
-  let root = document.getElementById("time-picker-modal-root");
-  if (!root) {
-    root = document.createElement("div");
-    root.id = "time-picker-modal-root";
-    document.body.appendChild(root);
-  }
-  if (!tpConf) {
-    root.innerHTML = "";
-    return;
-  }
-
-  let hOpts = "";
-  for (let i = 0; i < 24; i++) {
-    let v = i.toString().padStart(2, "0");
-    hOpts += `<option value="${v}" ${tpConf.h === v ? "selected" : ""}>${v}</option>`;
-  }
-  let mOpts = "";
-  for (let i = 0; i < 60; i++) {
-    let v = i.toString().padStart(2, "0");
-    mOpts += `<option value="${v}" ${tpConf.m === v ? "selected" : ""}>${v}</option>`;
-  }
-
-  root.innerHTML = `
-    <div class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onclick="if(event.target===this) closeCustomTimePicker()">
-      <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-[280px] flex flex-col gap-6">
-        <h3 class="font-extrabold text-slate-800 text-lg flex items-center gap-2"><i data-lucide="clock" class="w-5 h-5 text-blue-600"></i>時刻を選択</h3>
-        
-        <div class="flex items-center justify-center gap-3 text-xl">
-           <div class="flex flex-col gap-1 items-center">
-             <label class="text-xs font-bold text-slate-500">時</label>
-             <select onchange="tpConf.h=this.value" class="border border-slate-300 rounded-xl px-4 py-2 bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 font-bold block appearance-none text-center text-lg min-w-[70px]">
-               ${hOpts}
-             </select>
-           </div>
-           <span class="font-black text-slate-400 mt-5">:</span>
-           <div class="flex flex-col gap-1 items-center">
-             <label class="text-xs font-bold text-slate-500">分</label>
-             <select onchange="tpConf.m=this.value" class="border border-slate-300 rounded-xl px-4 py-2 bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 font-bold block appearance-none text-center text-lg min-w-[70px]">
-               ${mOpts}
-             </select>
-           </div>
-        </div>
-
-        <div class="flex gap-2 mt-2">
-           <button onclick="closeCustomTimePicker()" class="flex-1 py-3 bg-slate-100 font-bold text-slate-700 rounded-xl hover:bg-slate-200 transition-colors text-sm">キャンセル</button>
-           <button onclick="saveCustomTimePicker()" class="flex-1 py-3 bg-blue-600 font-bold text-white rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center gap-1.5 text-sm"><i data-lucide="check" class="w-4 h-4"></i>保存</button>
-        </div>
-      </div>
-    </div>
-  `;
-  if (window.lucide) lucide.createIcons();
+  if (window.lucide) lucide.createIcons({ root });
 }
 
 function setCalDeliveryTime(v) {
@@ -1855,22 +1683,33 @@ function setCalWatchTime(v) {
 function setCalAssignTime(v) {
   updateCalField("calAssignTime", v);
 }
-function setEditTaskTime(v) {
-  state.editTaskData.timeStr = v;
-  render();
-}
-function setTaskModalTime(v) {
-  taskModalData.timeStr = v;
-  renderTaskModal();
-}
+
+
 
 // End of logic
 
 // ------ INIT ------
 loadData();
 render();
+
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker
-    .register("/sw.js")
-    .catch((err) => console.log("SW registration failed", err));
+  navigator.serviceWorker.getRegistrations().then(function(registrations) {
+    for(let registration of registrations) {
+      registration.unregister();
+    }
+  });
+}
+// Expose globals for inline HTML event handlers
+window.state = state;
+window.tpConf = tpConf;
+window.shouldScrollToToday = shouldScrollToToday;
+
+const globalsToExpose = {
+  generateId, showToast, confirmAction, encodeBase64, decodeBase64, showExportModal, loadData, saveData, setActiveTab, addCourse, deleteCourse, toggleTaskCompletion, deleteTask, openCombinedImportModal, importData, formatTaskDate, isPastButNotToday, isTodayDate, formatTaskTimeOnly, startEditLecture, saveLectureName, shiftEditTaskDateRelative, setEditTaskDateTo, startEditTask, saveEditTask, cancelEditTask, render, renderNav, removeWidget, addWidget, renderHomeTab, renderTasksTab, renderCoursesTab, saveCourseEdit, renderGuideTab, renderSettingsTab, handleImport, openAssignmentAdder, closeAssignmentAdder, addAdderItem, removeAdderItem, updateAdderItem, saveAdderTasks, renderModal, exportData
+};
+
+for (const [key, val] of Object.entries(globalsToExpose)) {
+  if (typeof val === 'function') {
+    window[key] = val;
+  }
 }
